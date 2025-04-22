@@ -36,7 +36,6 @@ pub mod concert_nft_tickets {
         Ok(())
     }
 
-    // Perbaikan unused variable warning
     pub fn initialize_mint(_ctx: Context<InitializeMint>) -> Result<()> {
         msg!("Mint initialized");
         Ok(())
@@ -97,6 +96,23 @@ pub mod concert_nft_tickets {
         msg!("Tiket berhasil digunakan!");
         Ok(())
     }
+
+    pub fn delete_concert(ctx: Context<DeleteConcert>) -> Result<()> {
+        // Admin pubkey
+        let admin_pubkey = "2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU";
+        
+        // Verifikasi bahwa penghapus adalah pemilik konser ATAU admin global
+        let concert = &ctx.accounts.concert;
+        let authority = &ctx.accounts.authority;
+        
+        if concert.authority != authority.key() && 
+           authority.key().to_string() != admin_pubkey {
+            return err!(ErrorCode::Unauthorized);
+        }
+        
+        msg!("Concert deleted: {}", concert.name);
+        Ok(())
+    }
 }
 
 // Fungsi helper untuk mengurangi ukuran fungsi utama
@@ -136,8 +152,6 @@ fn save_ticket_data<'info>(
     Ok(())
 }
 
-// Structs lainnya tetap sama dengan beberapa perbaikan
-
 #[derive(Accounts)]
 pub struct InitializeConcert<'info> {
     #[account(mut)]
@@ -146,7 +160,7 @@ pub struct InitializeConcert<'info> {
     #[account(
         init,
         payer = authority,
-        space = 8 + 32 + MAX_NAME_LEN + MAX_VENUE_LEN + MAX_DATE_LEN + 2 + 2 // Ukuran lebih presisi
+        space = 8 + 32 + MAX_NAME_LEN + MAX_VENUE_LEN + MAX_DATE_LEN + 2 + 2
     )]
     pub concert: Account<'info, Concert>,
     
@@ -205,7 +219,7 @@ pub struct CreateTicket<'info> {
     #[account(
         init,
         payer = buyer,
-        space = 8 + 32 + 32 + 32 + MAX_TYPE_LEN + MAX_SEAT_LEN + 1 // Ukuran lebih presisi
+        space = 8 + 32 + 32 + 32 + MAX_TYPE_LEN + MAX_SEAT_LEN + 1
     )]
     pub ticket: Account<'info, Ticket>,
     
@@ -223,6 +237,21 @@ pub struct UseTicket<'info> {
         constraint = ticket.owner == authority.key() @ ErrorCode::NotTicketOwner
     )]
     pub ticket: Account<'info, Ticket>,
+}
+
+#[derive(Accounts)]
+pub struct DeleteConcert<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    #[account(
+        mut,
+        close = authority
+        // Constraint dihapus karena akan diperiksa di fungsi
+    )]
+    pub concert: Account<'info, Concert>,
+    
+    pub system_program: Program<'info, System>,
 }
 
 #[account]
@@ -261,4 +290,7 @@ pub enum ErrorCode {
     
     #[msg("Overflow aritmatika")]
     ArithmeticOverflow,
+    
+    #[msg("Tidak berwenang untuk operasi ini")]
+    Unauthorized,
 }

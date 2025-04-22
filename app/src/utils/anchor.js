@@ -1,3 +1,4 @@
+// utils/anchor.js
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { AnchorProvider, Program } from '@project-serum/anchor';
 import idl from '../idl.json';
@@ -72,7 +73,15 @@ export const getProvider = (wallet) => {
 export const getProgram = (wallet) => {
     try {
         const provider = getProvider(wallet);
-        return new Program(idl, programId, provider);
+        console.log("Creating program with IDL:", idl);
+        console.log("Program ID:", programId.toString());
+        console.log("Available instructions:", idl.instructions.map(instr => instr.name));
+        const program = new Program(idl, programId, provider);
+
+        // Debugging: log semua metode program
+        console.log("Program methods:", Object.keys(program.methods));
+
+        return program;
     } catch (error) {
         console.error("Error creating Program instance:", error);
         throw new Error(`Failed to initialize program: ${error.message}`);
@@ -116,4 +125,11 @@ export const requestAirdrop = async (wallet, amount = 2) => {
         console.error("Airdrop failed:", error);
         throw new Error(`Airdrop failed: ${error.message}`);
     }
+};
+
+// Fungsi untuk memeriksa apakah wallet adalah admin
+export const isAdmin = (wallet) => {
+    // Pubkey admin
+    const ADMIN_PUBLIC_KEY = "2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU"; // Ganti dengan public key Anda
+    return wallet.publicKey && wallet.publicKey.toString() === ADMIN_PUBLIC_KEY;
 };
