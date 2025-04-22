@@ -1,0 +1,44 @@
+/* app.css - versi lebih sederhana dan tidak konflik */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-gray-900 text-white;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    padding-top: 64px;
+    /* Untuk navbar fixed */
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-bold;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold py-3 px-8 rounded-lg hover:from-purple-700 hover:to-indigo-700 transition duration-300;
+  }
+
+  .btn-secondary {
+    @apply bg-transparent border-2 border-white text-white font-bold py-3 px-8 rounded-lg hover:bg-white/10 transition duration-300;
+  }
+
+  .btn-tertiary {
+    @apply bg-transparent border-2 border-purple-500 text-purple-400 font-bold py-3 px-8 rounded-lg hover:bg-purple-500/10 transition duration-300;
+  }
+
+  .card {
+    @apply bg-gray-800 rounded-lg shadow-lg overflow-hidden transition-all duration-300;
+  }
+
+  .container-custom {
+    @apply max-w-6xl mx-auto px-4 sm:px-6;
+  }
+}
