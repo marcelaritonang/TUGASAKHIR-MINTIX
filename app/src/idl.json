@@ -153,6 +153,27 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "deleteConcert",
+      "accounts": [
+        {
+          "name": "authority",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "concert",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -248,9 +269,11 @@
       "code": 6004,
       "name": "ArithmeticOverflow",
       "msg": "Overflow aritmatika"
+    },
+    {
+      "code": 6005,
+      "name": "Unauthorized",
+      "msg": "Tidak berwenang untuk operasi ini"
     }
-  ],
-  "metadata": {
-    "address": "3oKZi6zmYzbRDuq8nAAGeL9m9TcwFPAiR2cfz4vjANum"
-  }
+  ]
 }
