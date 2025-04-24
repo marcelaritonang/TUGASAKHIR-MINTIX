@@ -18,7 +18,7 @@ import CreateConcert from './components/CreateConcert';
 import MintTicket from './components/MintTicket';
 import VerifyTicket from './components/VerifyTicket';
 import MyTickets from './components/MyTickets';
-
+import ExplorePage from './components/ExplorePage';
 // Import CSS
 import '@solana/wallet-adapter-react-ui/styles.css';
 import './App.css';
@@ -41,9 +41,10 @@ function App() {
                   {/* HomePage harus menampilkan komponen home Anda */}
                   <Route path="/" element={<HomePage />} />
                   <Route path="/collections" element={<ConcertList />} />
-                  <Route path="/explore" element={<ConcertList />} />
+                  <Route path="/explore" element={<ExplorePage />} />
                   <Route path="/create-concert" element={<CreateConcert />} />
                   <Route path="/mint-ticket" element={<MintTicket />} />
+                  <Route path="/mint-ticket/:concertId" element={<MintTicket />} /> {/* Tambahkan route dengan parameter */}
                   <Route path="/verify-ticket" element={<VerifyTicket />} />
                   <Route path="/my-tickets" element={<MyTickets />} />
                 </Routes>
