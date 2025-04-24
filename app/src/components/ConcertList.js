@@ -1,4 +1,3 @@
-// components/ConcertList.js
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -7,11 +6,8 @@ import { PublicKey, SystemProgram } from '@solana/web3.js';
 import { getProgram, isAdmin } from '../utils/anchor';
 import { getAdminLoginStatus, logoutAdmin, verifyAdminLogin } from '../utils/adminAuth';
 import AdminLoginModal from './admin/AdminLoginModal';
+import EditConcertModal from './EditConcertModal';
 import idl from '../idl.json';
-
-// Debugging: Verifikasi IDL
-console.log("Loaded IDL version:", idl.version);
-console.log("IDL includes deleteConcert:", idl.instructions.some(instr => instr.name === "deleteConcert"));
 
 // Gradient text component untuk konsistensi
 const GradientText = ({ text, className = "" }) => {
@@ -22,8 +18,30 @@ const GradientText = ({ text, className = "" }) => {
     );
 };
 
-// Card component yang konsisten dengan FeaturedConcertsSection yang diupdate
-const ConcertCard = ({ concert, index, isAdminUser, onDeleteConcert, onEditConcert }) => {
+// Fungsi untuk memeriksa apakah user adalah admin global
+const isGlobalAdmin = (wallet) => {
+    const ADMIN_PUBLIC_KEY = "2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU";
+    return wallet.publicKey && wallet.publicKey.toString() === ADMIN_PUBLIC_KEY;
+};
+
+// Fungsi untuk memeriksa kepemilikan dengan format yang konsisten
+const isOwner = (creator, walletPublicKey) => {
+    if (!creator || !walletPublicKey) return false;
+
+    const creatorStr = typeof creator === 'object' ? creator.toString() : creator;
+    const walletStr = typeof walletPublicKey === 'object' ? walletPublicKey.toString() : walletPublicKey;
+
+    console.log("Comparing pubkeys:", {
+        creator: creatorStr,
+        wallet: walletStr,
+        areEqual: creatorStr === walletStr
+    });
+
+    return creatorStr === walletStr;
+};
+
+// Card component
+const ConcertCard = ({ concert, index, isAdminUser, onDeleteConcert, onEditConcert, wallet }) => {
     // Array of gradient backgrounds for tickets
     const previewImages = [
         "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='a' gradientUnits='userSpaceOnUse' x1='0' x2='0' y1='0' y2='100%25' gradientTransform='rotate(240)'%3E%3Cstop offset='0' stop-color='%234338ca'/%3E%3Cstop offset='1' stop-color='%23a855f7'/%3E%3C/linearGradient%3E%3Cpattern patternUnits='userSpaceOnUse' id='b' width='300' height='250' x='0' y='0' viewBox='0 0 1080 900'%3E%3Cg fill-opacity='0.05'%3E%3Cpolygon fill='%23444' points='90 150 0 300 180 300'/%3E%3Cpolygon points='90 150 180 0 0 0'/%3E%3Cpolygon fill='%23AAA' points='270 150 360 0 180 0'/%3E%3Cpolygon fill='%23DDD' points='450 150 360 300 540 300'/%3E%3Cpolygon fill='%23999' points='450 150 540 0 360 0'/%3E%3Cpolygon points='630 150 540 300 720 300'/%3E%3Cpolygon fill='%23DDD' points='630 150 720 0 540 0'/%3E%3Cpolygon fill='%23444' points='810 150 720 300 900 300'/%3E%3Cpolygon fill='%23FFF' points='810 150 900 0 720 0'/%3E%3Cpolygon fill='%23DDD' points='990 150 900 300 1080 300'/%3E%3Cpolygon fill='%23444' points='990 150 1080 0 900 0'/%3E%3Cpolygon fill='%23DDD' points='90 450 0 600 180 600'/%3E%3Cpolygon points='90 450 180 300 0 300'/%3E%3Cpolygon fill='%23666' points='270 450 180 600 360 600'/%3E%3Cpolygon fill='%23AAA' points='270 450 360 300 180 300'/%3E%3Cpolygon fill='%23DDD' points='450 450 360 600 540 600'/%3E%3Cpolygon fill='%23999' points='450 450 540 300 360 300'/%3E%3Cpolygon fill='%23999' points='630 450 540 600 720 600'/%3E%3Cpolygon fill='%23FFF' points='630 450 720 300 540 300'/%3E%3Cpolygon points='810 450 720 600 900 600'/%3E%3Cpolygon fill='%23DDD' points='810 450 900 300 720 300'/%3E%3Cpolygon fill='%23AAA' points='990 450 900 600 1080 600'/%3E%3Cpolygon fill='%23444' points='990 450 1080 300 900 300'/%3E%3Cpolygon fill='%23222' points='90 750 0 900 180 900'/%3E%3Cpolygon points='270 750 180 900 360 900'/%3E%3Cpolygon fill='%23DDD' points='270 750 360 600 180 600'/%3E%3Cpolygon points='450 750 540 600 360 600'/%3E%3Cpolygon points='630 750 540 900 720 900'/%3E%3Cpolygon fill='%23444' points='630 750 720 600 540 600'/%3E%3Cpolygon fill='%23AAA' points='810 750 720 900 900 900'/%3E%3Cpolygon fill='%23666' points='810 750 900 600 720 600'/%3E%3Cpolygon fill='%23999' points='990 750 900 900 1080 900'/%3E%3Cpolygon fill='%23999' points='180 0 90 150 270 150'/%3E%3Cpolygon fill='%23444' points='360 0 270 150 450 150'/%3E%3Cpolygon fill='%23FFF' points='540 0 450 150 630 150'/%3E%3Cpolygon points='900 0 810 150 990 150'/%3E%3Cpolygon fill='%23222' points='0 300 -90 450 90 450'/%3E%3Cpolygon fill='%23FFF' points='0 300 90 150 -90 150'/%3E%3Cpolygon fill='%23FFF' points='180 300 90 450 270 450'/%3E%3Cpolygon fill='%23666' points='180 300 270 150 90 150'/%3E%3Cpolygon fill='%23222' points='360 300 270 450 450 450'/%3E%3Cpolygon fill='%23FFF' points='360 300 450 150 270 150'/%3E%3Cpolygon fill='%23444' points='540 300 450 450 630 450'/%3E%3Cpolygon fill='%23222' points='540 300 630 150 450 150'/%3E%3Cpolygon fill='%23AAA' points='720 300 630 450 810 450'/%3E%3Cpolygon fill='%23666' points='720 300 810 150 630 150'/%3E%3Cpolygon fill='%23FFF' points='900 300 810 450 990 450'/%3E%3Cpolygon fill='%23999' points='900 300 990 150 810 150'/%3E%3Cpolygon points='0 600 -90 750 90 750'/%3E%3Cpolygon fill='%23666' points='0 600 90 450 -90 450'/%3E%3Cpolygon fill='%23AAA' points='180 600 90 750 270 750'/%3E%3Cpolygon fill='%23444' points='180 600 270 450 90 450'/%3E%3Cpolygon fill='%23444' points='360 600 270 750 450 750'/%3E%3Cpolygon fill='%23999' points='360 600 450 450 270 450'/%3E%3Cpolygon fill='%23666' points='540 600 630 450 450 450'/%3E%3Cpolygon fill='%23222' points='720 600 630 750 810 750'/%3E%3Cpolygon fill='%23FFF' points='900 600 810 750 990 750'/%3E%3Cpolygon fill='%23222' points='900 600 990 450 810 450'/%3E%3Cpolygon fill='%23DDD' points='0 900 90 750 -90 750'/%3E%3Cpolygon fill='%23444' points='180 900 270 750 90 750'/%3E%3Cpolygon fill='%23FFF' points='360 900 450 750 270 750'/%3E%3Cpolygon fill='%23AAA' points='540 900 630 750 450 750'/%3E%3Cpolygon fill='%23FFF' points='720 900 810 750 630 750'/%3E%3Cpolygon fill='%23222' points='900 900 990 750 810 750'/%3E%3Cpolygon fill='%23222' points='1080 300 990 450 1170 450'/%3E%3Cpolygon fill='%23FFF' points='1080 300 1170 150 990 150'/%3E%3Cpolygon points='1080 600 990 750 1170 750'/%3E%3Cpolygon fill='%23666' points='1080 600 1170 450 990 450'/%3E%3Cpolygon fill='%23DDD' points='1080 900 1170 750 990 750'/%3E%3C/g%3E%3C/pattern%3E%3C/defs%3E%3Crect x='0' y='0' fill='url(%23a)' width='100%25' height='100%25'/%3E%3Crect x='0' y='0' fill='url(%23b)' width='100%25' height='100%25'/%3E%3C/svg%3E",
@@ -46,6 +64,26 @@ const ConcertCard = ({ concert, index, isAdminUser, onDeleteConcert, onEditConce
         }
         return id;
     };
+
+    // Periksa apakah pengguna saat ini adalah pemilik konser
+    const isOwnedByCurrentUser = isOwner(concert.creator, wallet.publicKey);
+
+    // Periksa apakah pengguna adalah admin global
+    const isGlobalAdminUser = isGlobalAdmin(wallet);
+
+    // Debugging ownership
+    useEffect(() => {
+        console.log("Concert ownership check:", {
+            concertId: concert.id,
+            concertName: concert.name,
+            creator: concert.creator,
+            currentWallet: wallet?.publicKey?.toString(),
+            isOwnedByCurrentUser: isOwnedByCurrentUser
+        });
+    }, [concert, wallet?.publicKey, isOwnedByCurrentUser]);
+
+    // Menentukan apakah pengguna dapat menghapus konser
+    const canDelete = isOwnedByCurrentUser || isGlobalAdminUser;
 
     return (
         <motion.div
@@ -152,163 +190,53 @@ const ConcertCard = ({ concert, index, isAdminUser, onDeleteConcert, onEditConce
                                     </div>
                                 </button>
 
-                                {/* Delete button only for non-static concerts */}
-                                {!concert.id.startsWith('static-') && (
+                                {/* Delete button - hanya tampilkan jika user bisa menghapus */}
+                                {canDelete && (
                                     <button
                                         onClick={() => onDeleteConcert(concert.id)}
                                         className="block w-full bg-gradient-to-br from-red-500 to-red-600 p-0.5 rounded-lg hover:shadow-lg hover:shadow-red-500/20 transition duration-300"
                                     >
                                         <div className="bg-gray-900 text-white text-center py-2 rounded-md text-sm font-medium hover:bg-gray-800/90 transition duration-300">
                                             Delete Concert
+                                            {isGlobalAdminUser && !isOwnedByCurrentUser && (
+                                                <span className="text-xs block">(Admin Override)</span>
+                                            )}
+                                            {isOwnedByCurrentUser && (
+                                                <span className="text-xs block">(Owner)</span>
+                                            )}
                                         </div>
                                     </button>
                                 )}
+
+                                {/* Pesan jika tidak bisa menghapus */}
+                                {!canDelete && (
+                                    <div className="text-gray-400 text-xs text-center mt-2">
+                                        Only the owner or admin can delete this concert
+                                    </div>
+                                )}
+
+                                {/* Debug button */}
+                                <button
+                                    onClick={() => {
+                                        alert(`Debugging Concert Ownership:
+Concert ID: ${concert.id}
+Concert Name: ${concert.name}
+Creator: ${concert.creator}
+Your Wallet: ${wallet.publicKey?.toString()}
+Is Owner: ${isOwnedByCurrentUser ? 'Yes' : 'No'}
+Is Global Admin: ${isGlobalAdminUser ? 'Yes' : 'No'}
+Can Delete: ${canDelete ? 'Yes' : 'No'}`);
+                                    }}
+                                    className="text-xs text-gray-400 underline mt-2 w-full text-center"
+                                >
+                                    Debug Ownership
+                                </button>
                             </>
                         )}
                     </div>
                 </div>
             </div>
         </motion.div>
-    );
-};
-
-// Modal for editing concerts
-const EditConcertModal = ({ isOpen, concert, onClose, onSave }) => {
-    const [name, setName] = useState('');
-    const [venue, setVenue] = useState('');
-    const [date, setDate] = useState('');
-    const [totalTickets, setTotalTickets] = useState(0);
-    const [category, setCategory] = useState('uncategorized');
-
-    // Initialize form when modal opens with concert data
-    useEffect(() => {
-        if (concert) {
-            setName(concert.name || '');
-            setVenue(concert.venue || '');
-            setDate(concert.date || '');
-            setTotalTickets(concert.total || 0);
-            setCategory(concert.category || 'uncategorized');
-        }
-    }, [concert]);
-
-    if (!isOpen) return null;
-
-    const handleSubmit = (e) => {
-        e.preventDefault();
-
-        // Prepare updated concert data
-        const updatedConcert = {
-            ...concert,
-            name,
-            venue,
-            date,
-            total: parseInt(totalTickets),
-            available: parseInt(totalTickets) - (concert.total - concert.available),
-            category
-        };
-
-        onSave(updatedConcert);
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
-            <div className="bg-gray-900 border border-purple-700 rounded-lg p-6 max-w-md w-full">
-                <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-xl font-bold text-white">Edit Concert</h2>
-                    <button
-                        onClick={onClose}
-                        className="text-gray-400 hover:text-white"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                    </button>
-                </div>
-
-                <form onSubmit={handleSubmit}>
-                    <div className="mb-4">
-                        <label className="block text-gray-300 mb-2">Concert Name</label>
-                        <input
-                            type="text"
-                            className="w-full bg-gray-800 text-white border border-gray-700 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            required
-                        />
-                    </div>
-
-                    <div className="mb-4">
-                        <label className="block text-gray-300 mb-2">Venue</label>
-                        <input
-                            type="text"
-                            className="w-full bg-gray-800 text-white border border-gray-700 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                            value={venue}
-                            onChange={(e) => setVenue(e.target.value)}
-                            required
-                        />
-                    </div>
-
-                    <div className="mb-4">
-                        <label className="block text-gray-300 mb-2">Date</label>
-                        <input
-                            type="text"
-                            className="w-full bg-gray-800 text-white border border-gray-700 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                            value={date}
-                            onChange={(e) => setDate(e.target.value)}
-                            placeholder="e.g., Apr 25, 2025"
-                            required
-                        />
-                    </div>
-
-                    <div className="mb-4">
-                        <label className="block text-gray-300 mb-2">Total Tickets</label>
-                        <input
-                            type="number"
-                            className="w-full bg-gray-800 text-white border border-gray-700 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                            value={totalTickets}
-                            onChange={(e) => setTotalTickets(e.target.value)}
-                            min="1"
-                            required
-                        />
-                    </div>
-
-                    <div className="mb-6">
-                        <label className="block text-gray-300 mb-2">Category</label>
-                        <select
-                            className="w-full bg-gray-800 text-white border border-gray-700 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                            value={category}
-                            onChange={(e) => setCategory(e.target.value)}
-                        >
-                            <option value="uncategorized">Uncategorized</option>
-                            <option value="festival">Festival</option>
-                            <option value="rock">Rock</option>
-                            <option value="jazz">Jazz</option>
-                            <option value="classical">Classical</option>
-                            <option value="hiphop">Hip Hop</option>
-                            <option value="electronic">Electronic</option>
-                            <option value="pop">Pop</option>
-                            <option value="country">Country</option>
-                        </select>
-                    </div>
-
-                    <div className="flex justify-end">
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            className="mr-2 px-4 py-2 border border-gray-600 text-gray-300 rounded-md hover:bg-gray-800"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="submit"
-                            className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-md hover:from-purple-700 hover:to-indigo-700"
-                        >
-                            Save Changes
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
     );
 };
 
@@ -440,6 +368,7 @@ const ConcertList = () => {
     };
 
     // Function to delete concert (admin only)
+    // Function to delete concert (admin only) - dengan pembaruan untuk menghapus tiket terkait
     const handleDeleteConcert = async (concertId) => {
         if (!isAdminLoggedIn) {
             alert("You must be logged in as admin to delete concerts");
@@ -447,7 +376,7 @@ const ConcertList = () => {
         }
 
         try {
-            const confirmDelete = window.confirm("Are you sure you want to delete this concert?");
+            const confirmDelete = window.confirm("Are you sure you want to delete this concert? All associated tickets will also be deleted.");
             if (!confirmDelete) return;
 
             // Jika ini adalah static concert, tangani secara lokal saja
@@ -455,33 +384,82 @@ const ConcertList = () => {
                 // Filter static concerts
                 const updatedConcerts = concerts.filter(c => c.id !== concertId);
                 setConcerts(updatedConcerts);
-                alert("Static concert deleted successfully (local only)!");
+
+                // Hapus juga tiket yang terkait dengan konser ini dari localStorage
+                try {
+                    const savedTickets = JSON.parse(localStorage.getItem('mintedStaticTickets') || '[]');
+                    const updatedTickets = savedTickets.filter(ticket => ticket.concertId !== concertId);
+
+                    // Simpan kembali tiket yang sudah difilter
+                    localStorage.setItem('mintedStaticTickets', JSON.stringify(updatedTickets));
+
+                    console.log(`Deleted ${savedTickets.length - updatedTickets.length} tickets associated with concert ${concertId}`);
+                } catch (err) {
+                    console.error("Error removing associated tickets from localStorage:", err);
+                }
+
+                alert("Static concert and its tickets deleted successfully!");
                 return;
             }
 
+            // Untuk konser blockchain
             const program = getProgram(wallet);
+            const concertPubkey = new PublicKey(concertId);
 
-            console.log("Deleting concert with ID:", concertId);
-            console.log("Using authority:", wallet.publicKey.toString());
-            console.log("Program methods available:", Object.keys(program.methods));
+            // Debugging: Print detailed information about the concert and wallet
+            const concertToDelete = concerts.find(c => c.id === concertId);
+            console.log("Attempting to delete concert:", {
+                id: concertId,
+                name: concertToDelete?.name,
+                creator: concertToDelete?.creator,
+                walletPubkey: wallet.publicKey?.toString(),
+                isOwner: isOwner(concertToDelete?.creator, wallet.publicKey),
+                isGlobalAdmin: isGlobalAdmin(wallet)
+            });
 
-            // Directly use deleteConcert method (now we know it exists)
+            // Fetch concert data for verification
+            try {
+                const concertAccount = await program.account.concert.fetch(concertPubkey);
+                console.log("Concert data fetched:", {
+                    authority: concertAccount.authority.toString(),
+                    name: concertAccount.name
+                });
+            } catch (err) {
+                console.error("Error fetching concert data:", err);
+            }
+
+            // Execute delete operation on blockchain
             await program.methods
                 .deleteConcert()
                 .accounts({
                     authority: wallet.publicKey,
-                    concert: new PublicKey(concertId),
+                    concert: concertPubkey,
                     systemProgram: SystemProgram.programId,
                 })
                 .rpc();
 
-            alert("Concert deleted successfully!");
+            // Untuk blockchain tickets, juga hapus referensi lokal jika ada
+            try {
+                // Hapus referensi dari localStorage
+                const blockchainTicketsKey = `blockchain_tickets_${concertId}`;
+                localStorage.removeItem(blockchainTicketsKey);
+                console.log(`Removed local references to blockchain tickets for concert ${concertId}`);
+            } catch (err) {
+                console.error("Error removing local blockchain ticket references:", err);
+            }
+
+            alert("Concert and its tickets deleted successfully!");
 
             // Refresh concert list
             fetchConcerts();
         } catch (error) {
             console.error("Error deleting concert:", error);
-            alert("Failed to delete concert: " + error.message);
+
+            if (error.message.includes("Unauthorized")) {
+                alert("Unauthorized: You don't have permission to delete this concert. Only the concert owner or global admin can delete concerts.");
+            } else {
+                alert("Failed to delete concert: " + error.message);
+            }
         }
     };
 
@@ -506,29 +484,29 @@ const ConcertList = () => {
             // Format concert data
             const blockchainConcerts = concertAccounts.map((account) => {
                 const concert = account.account;
+                const creator = concert.authority.toString();
+
+                console.log(`Processing concert ${concert.name}:`, {
+                    id: account.publicKey.toString(),
+                    creator: creator,
+                    currentWallet: wallet.publicKey.toString(),
+                    isOwner: creator === wallet.publicKey.toString()
+                });
+
                 return {
                     id: account.publicKey.toString(),
                     name: concert.name,
                     venue: concert.venue,
                     date: concert.date,
-                    available: concert.totalTickets - (concert.ticketsSold || 0), // Note: Using ticketsSold from IDL
+                    available: concert.totalTickets - concert.ticketsSold,
                     total: concert.totalTickets,
                     category: 'uncategorized',
-                    creator: concert.authority.toString()
+                    creator: creator // Store creator pubkey as string
                 };
             });
 
-            // Remove duplicates based on name, venue, and date
-            const uniqueBlockchainConcerts = blockchainConcerts.filter((concert, index, self) =>
-                index === self.findIndex((c) => (
-                    c.name === concert.name &&
-                    c.venue === concert.venue &&
-                    c.date === concert.date
-                ))
-            );
-
             // Combine blockchain concerts with static concerts
-            const allConcerts = [...uniqueBlockchainConcerts, ...staticConcerts];
+            const allConcerts = [...blockchainConcerts, ...staticConcerts];
             setConcerts(allConcerts);
 
         } catch (error) {
@@ -542,6 +520,29 @@ const ConcertList = () => {
     // Load concerts on component mount and when wallet connection changes
     useEffect(() => {
         fetchConcerts();
+
+        // Set up event listener for when user returns to this page
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                fetchConcerts();
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        // Setup regular refresh every 30 seconds if wallet is connected
+        let refreshInterval;
+        if (wallet.connected) {
+            refreshInterval = setInterval(() => {
+                fetchConcerts();
+            }, 30000); // Refresh every 30 seconds
+        }
+
+        // Cleanup function to remove event listener and clear interval when component unmounts
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            if (refreshInterval) clearInterval(refreshInterval);
+        };
     }, [wallet.connected, wallet.publicKey]);
 
     // Handle filter change
@@ -563,6 +564,11 @@ const ConcertList = () => {
                         {isAdminLoggedIn && (
                             <span className="ml-3 text-sm bg-purple-600 px-3 py-1 rounded-full">
                                 Admin Mode
+                            </span>
+                        )}
+                        {isGlobalAdmin(wallet) && isAdminLoggedIn && (
+                            <span className="ml-3 text-sm bg-red-600 px-3 py-1 rounded-full">
+                                Global Admin
                             </span>
                         )}
                     </h1>
@@ -639,6 +645,7 @@ const ConcertList = () => {
                                 isAdminUser={isAdminLoggedIn}
                                 onDeleteConcert={handleDeleteConcert}
                                 onEditConcert={handleEditConcert}
+                                wallet={wallet}
                             />
                         ))}
                     </div>

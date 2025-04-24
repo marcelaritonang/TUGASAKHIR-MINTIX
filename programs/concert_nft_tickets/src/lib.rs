@@ -98,19 +98,82 @@ pub mod concert_nft_tickets {
     }
 
     pub fn delete_concert(ctx: Context<DeleteConcert>) -> Result<()> {
-        // Admin pubkey
-        let admin_pubkey = "2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU";
+        // Admin pubkey 
+        let admin_pubkey_str = "2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU";
         
         // Verifikasi bahwa penghapus adalah pemilik konser ATAU admin global
         let concert = &ctx.accounts.concert;
         let authority = &ctx.accounts.authority;
         
-        if concert.authority != authority.key() && 
-           authority.key().to_string() != admin_pubkey {
+        // Cek apakah pengguna adalah pemilik konser
+        let is_owner = concert.authority == authority.key();
+        
+        // Cek apakah pengguna adalah admin global
+        let is_admin = authority.key().to_string() == admin_pubkey_str;
+        
+        if !is_owner && !is_admin {
+            msg!("Pengguna bukan pemilik concert atau admin global");
             return err!(ErrorCode::Unauthorized);
         }
         
-        msg!("Concert deleted: {}", concert.name);
+        // Log informasi penghapusan
+        if is_admin {
+            msg!("Admin menghapus konser: {}", concert.name);
+        } else {
+            msg!("Pemilik menghapus konser: {}", concert.name);
+        }
+        
+        Ok(())
+    }
+
+    pub fn update_concert(
+        ctx: Context<UpdateConcert>,
+        name: String,
+        venue: String,
+        date: String,
+        total_tickets: u16
+    ) -> Result<()> {
+        // Validasi panjang input
+        if name.len() > MAX_NAME_LEN || venue.len() > MAX_VENUE_LEN || date.len() > MAX_DATE_LEN {
+            return err!(ErrorCode::StringTooLong);
+        }
+
+        // Admin pubkey
+        let admin_pubkey_str = "2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU";
+        
+        // Verifikasi bahwa pengubah adalah pemilik konser ATAU admin global
+        let concert = &mut ctx.accounts.concert;
+        let authority = &ctx.accounts.authority;
+        
+        // Cek apakah pengguna adalah pemilik konser
+        let is_owner = concert.authority == authority.key();
+        
+        // Cek apakah pengguna adalah admin global
+        let is_admin = authority.key().to_string() == admin_pubkey_str;
+        
+        if !is_owner && !is_admin {
+            msg!("Pengguna bukan pemilik concert atau admin global");
+            return err!(ErrorCode::Unauthorized);
+        }
+
+        // Jika total tiket baru lebih kecil dari yang sudah terjual, tolak
+        if total_tickets < concert.tickets_sold {
+            return err!(ErrorCode::ArithmeticOverflow);
+        }
+        
+        // Update concert data
+        concert.name = name;
+        concert.venue = venue;
+        concert.date = date;
+        concert.total_tickets = total_tickets;
+        
+        // Log informasi update
+        if is_admin {
+            msg!("Admin mengupdate konser: {}", concert.name);
+        } else {
+            msg!("Pemilik mengupdate konser: {}", concert.name);
+        }
+        
         Ok(())
     }
 }
@@ -204,11 +267,8 @@ pub struct CreateTicket<'info> {
     #[account(mut)]
     pub buyer: Signer<'info>,
     
-    #[account(
-        mut,
-        has_one = authority,
-    )]
-    pub concert: Account<'info, Concert>,
+    #[account(mut)]
+    pub concert: Account<'info, Concert>,  // Hapus has_one constraint
     
     #[account(mut)]
     pub mint: Account<'info, Mint>,
@@ -247,8 +307,19 @@ pub struct DeleteConcert<'info> {
     #[account(
         mut,
         close = authority
-        // Constraint dihapus karena akan diperiksa di fungsi
+        // Hapus constraint di sini, karena logika izin sudah ditangani di fungsi
     )]
+    pub concert: Account<'info, Concert>,
+    
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateConcert<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    
+    #[account(mut)]
     pub concert: Account<'info, Concert>,
     
     pub system_program: Program<'info, System>,
