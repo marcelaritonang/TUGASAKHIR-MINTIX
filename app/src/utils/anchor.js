@@ -1,4 +1,4 @@
-// utils/anchor.js
+// src/utils/anchor.js
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { AnchorProvider, Program } from '@project-serum/anchor';
 import idl from '../idl.json';

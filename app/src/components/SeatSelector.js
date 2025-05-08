@@ -1,548 +1,462 @@
-import React, { useState, useEffect } from 'react';
+// src/components/SeatSelector.js
+import React, { useState, useEffect, useRef } from 'react';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { Connection, PublicKey } from '@solana/web3.js';
+import { LAMPORTS_PER_SOL } from '@solana/web3.js';
+import LoadingSpinner from './common/LoadingSpinner';
+import ApiService from '../services/ApiService';
+import blockchainService from '../services/blockchain';
 
-const SeatSelector = ({ ticketType, concertId, onSeatSelected, selectedConcert, mintedSeats = [], refreshTrigger = 0 }) => {
-    const [selectedSection, setSelectedSection] = useState('');
-    const [selectedRow, setSelectedRow] = useState('');
-    const [selectedSeat, setSelectedSeat] = useState('');
-    const [sections, setSections] = useState([]);
-    const [rows, setRows] = useState([]);
-    const [seats, setSeats] = useState([]);
-    const [availabilityMap, setAvailabilityMap] = useState({});
+const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, mintedSeats = [], refreshTrigger, ticketPrice = 0.01 }) => {
+    const wallet = useWallet();
     const [loading, setLoading] = useState(false);
-    const [totalSeats, setTotalSeats] = useState(0);
     const [error, setError] = useState('');
+    const [availableSeats, setAvailableSeats] = useState([]);
+    const [selectedSeat, setSelectedSeat] = useState('');
+    const [rows, setRows] = useState(0);
+    const [columns, setColumns] = useState(0);
+    const [solanaBalance, setSolanaBalance] = useState(0);
+    const [exactMintedSeats, setExactMintedSeats] = useState([]);
+    const [sectionAvailableSeats, setSectionAvailableSeats] = useState(0);
+    const [sectionTotalSeats, setSectionTotalSeats] = useState(0);
+    const [refreshInterval, setRefreshInterval] = useState(null);
 
-    // Debug log saat komponen dimount
+    // Ref untuk mencegah multiple API calls
+    const loadingRef = useRef(false);
+    const lastRefreshRef = useRef(Date.now());
+
+    // Debug log
     useEffect(() => {
-        console.log("[SeatSelector] Component mounted");
-        console.log("[SeatSelector] Initial mintedSeats:", mintedSeats);
-    }, []);
+        console.log("SeatSelector Props:", {
+            ticketType,
+            concertId,
+            mintedSeats: mintedSeats?.length || 0,
+            refreshTrigger
+        });
+    }, [ticketType, concertId, mintedSeats, refreshTrigger]);
 
-    // Inisialisasi peta dari setiap section ke baris dan kursi yang tersedia
-    const initializeAvailabilityMap = (totalSeats, sections) => {
-        const seatMap = {};
-        let remainingSeats = totalSeats;
-
-        // Jika tidak ada kursi tersedia, return peta kosong
-        if (totalSeats <= 0) {
-            return seatMap;
+    // Set up polling untuk refresh minted seats secara otomatis
+    useEffect(() => {
+        // Bersihkan interval yang ada jika ada
+        if (refreshInterval) {
+            clearInterval(refreshInterval);
         }
 
-        // Buat daftar section yang akan digunakan
-        const sectionsToUse = sections.slice(0, Math.min(sections.length, 3));
+        // Hanya set up polling jika ada concertId dan ticketType
+        if (concertId && ticketType) {
+            // Set interval untuk refresh data setiap 10 detik
+            const interval = setInterval(() => {
+                const now = Date.now();
+                // Hindari refresh terlalu sering (minimal 8 detik sejak refresh terakhir)
+                if (now - lastRefreshRef.current >= 8000 && !loadingRef.current) {
+                    console.log("Auto-refreshing minted seats...");
+                    refreshMintedSeats();
+                }
+            }, 10000);
 
-        // Distribusikan kursi ke setiap section
-        const seatsPerSection = Math.max(1, Math.ceil(totalSeats / sectionsToUse.length));
+            setRefreshInterval(interval);
+        }
 
-        sectionsToUse.forEach((section, index) => {
-            // Berapa kursi untuk section ini?
-            const seatsForThisSection = Math.min(remainingSeats, seatsPerSection);
-            if (seatsForThisSection <= 0) return;
+        // Cleanup saat komponen unmount
+        return () => {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+        };
+    }, [concertId, ticketType]);
 
-            // Berapa baris untuk section ini? (maksimal 3 baris per section)
-            const rows = Math.min(3, Math.ceil(seatsForThisSection / 5));
-            const seatsPerRow = Math.ceil(seatsForThisSection / rows);
+    // Fungsi untuk refresh minted seats
+    const refreshMintedSeats = async () => {
+        if (!concertId || loadingRef.current) return;
 
-            let seatsLeft = seatsForThisSection;
+        loadingRef.current = true;
+        lastRefreshRef.current = Date.now();
 
-            // Buat baris dan kursi
-            for (let row = 1; row <= rows; row++) {
-                const rowKey = `${section}-${row}`;
-                seatMap[rowKey] = {};
+        try {
+            const result = await ApiService.getMintedSeats(concertId);
+            if (result && result.seats) {
+                // Filter berdasarkan ticket type
+                const filtered = result.seats.filter(seat => {
+                    return seat.startsWith(`${ticketType}-`);
+                });
 
-                // Berapa kursi untuk baris ini?
-                const seatsForThisRow = Math.min(seatsLeft, seatsPerRow);
+                // Periksa apakah ada perubahan
+                const currentSeats = new Set(exactMintedSeats);
+                const newSeats = new Set(filtered);
+                let hasChanges = false;
 
-                // Buat kursi
-                for (let seat = 1; seat <= seatsForThisRow; seat++) {
-                    seatMap[rowKey][seat.toString()] = true;
+                // Periksa jika jumlah kursi berbeda
+                if (currentSeats.size !== newSeats.size) {
+                    hasChanges = true;
+                } else {
+                    // Periksa perbedaan kursi
+                    for (const seat of newSeats) {
+                        if (!currentSeats.has(seat)) {
+                            hasChanges = true;
+                            break;
+                        }
+                    }
                 }
 
-                seatsLeft -= seatsForThisRow;
-                if (seatsLeft <= 0) break;
+                // Update hanya jika ada perubahan
+                if (hasChanges) {
+                    console.log(`Minted seats berubah: ${exactMintedSeats.length} → ${filtered.length}`);
+                    setExactMintedSeats(filtered);
+                    // Regenerate seats
+                    generateSeats(filtered);
+                }
             }
-
-            remainingSeats -= seatsForThisSection;
-        });
-
-        return seatMap;
+        } catch (err) {
+            console.error("Error refreshing minted seats:", err);
+        } finally {
+            loadingRef.current = false;
+        }
     };
 
-    // Konfigurasi sections, rows, dan seats berdasarkan jenis tiket dan konser terpilih
+    // Filter minted seats untuk tipe tiket tertentu
     useEffect(() => {
-        if (!ticketType || !selectedConcert) return;
+        if (Array.isArray(mintedSeats) && ticketType) {
+            // Filter untuk mendapatkan hanya kursi yang sesuai dengan tipe tiket saat ini
+            const filtered = mintedSeats.filter(seat => {
+                // Format seat biasanya: "TypeTiket-KodeKursi" (e.g., "VIP-A12")
+                return seat.startsWith(`${ticketType}-`);
+            });
 
+            console.log(`Kursi terfilter untuk ${ticketType}:`, filtered);
+            setExactMintedSeats(filtered);
+
+            // Jika selectedConcert tersedia, perbarui jumlah kursi tersedia
+            if (selectedConcert) {
+                const section = selectedConcert.sections.find(s => s.name === ticketType);
+                if (section) {
+                    // Setel jumlah kursi tersedia berdasarkan total kursi dikurangi jumlah kursi yang terjual
+                    const availableCount = Math.max(0, section.totalSeats - filtered.length);
+                    setSectionAvailableSeats(availableCount);
+                    setSectionTotalSeats(section.totalSeats);
+
+                    // Penting: Perbarui section.availableSeats di prop selectedConcert
+                    // dengan cara panggil callback untuk melakukan update
+                    if (section.availableSeats !== availableCount) {
+                        console.log(`Memperbarui jumlah kursi yang tersedia untuk ${ticketType}: ${availableCount}/${section.totalSeats}`);
+                        // Kirim data perubahan melalui onSeatSelected dengan parameter khusus
+                        onSeatSelected(null, {
+                            updateAvailability: true,
+                            ticketType: ticketType,
+                            availableSeats: availableCount,
+                            totalSeats: section.totalSeats
+                        });
+                    }
+                }
+            }
+        } else {
+            setExactMintedSeats([]);
+        }
+    }, [mintedSeats, ticketType, selectedConcert]);
+
+    // Mengambil saldo Solana wallet
+    useEffect(() => {
+        const fetchSolanaBalance = async () => {
+            if (wallet && wallet.publicKey) {
+                try {
+                    // Gunakan blockchainService untuk mendapatkan saldo
+                    const balance = await blockchainService.getSolanaBalance(wallet.publicKey);
+                    setSolanaBalance(balance);
+                    console.log(`Saldo Solana: ${balance} SOL`);
+                } catch (err) {
+                    console.error("Error fetching Solana balance:", err);
+                }
+            }
+        };
+
+        fetchSolanaBalance();
+    }, [wallet, wallet.publicKey]);
+
+    // Menghasilkan layout kursi saat komponen dimuat atau saat properti berubah
+    useEffect(() => {
+        if (!ticketType || !selectedConcert) {
+            setAvailableSeats([]);
+            return;
+        }
+
+        generateSeats();
+    }, [ticketType, selectedConcert, exactMintedSeats, refreshTrigger]);
+
+    // Fungsi untuk menghasilkan layout kursi berdasarkan jumlah total kursi dan kursi yang sudah di-mint
+    const generateSeats = (mintedSeatsArray = null) => {
         setLoading(true);
         setError('');
 
-        // Reset selections when ticket type changes
-        setSelectedSection('');
-        setSelectedRow('');
-        setSelectedSeat('');
+        try {
+            // Temukan seksi tiket yang dipilih
+            const section = selectedConcert.sections.find(s => s.name === ticketType);
 
-        // Define sections based on ticket type
-        let sectionsForType = [];
-        switch (ticketType) {
-            case 'Regular':
-                sectionsForType = ['C', 'D', 'E'];
-                break;
-            case 'VIP':
-                sectionsForType = ['A', 'B'];
-                break;
-            case 'Backstage':
-                sectionsForType = ['BACKSTAGE'];
-                break;
-            default:
-                sectionsForType = [];
-        }
-
-        setSections(sectionsForType);
-
-        // Khusus untuk jumlah kecil, atur sesuai kebutuhan
-        let seatsToShow = 0;
-        const availableTickets = selectedConcert.available;
-
-        // Pendekatan khusus untuk tiket tersedia rendah (< 10)
-        if (availableTickets < 10) {
-            // Untuk tiket <= 3, beri pembagian 1 tiket per jenis
-            if (availableTickets <= 3) {
-                switch (ticketType) {
-                    case 'Regular':
-                        // Untuk jumlah tiket <= 3, berikan prioritas ke Regular
-                        if (availableTickets === 1) {
-                            seatsToShow = 1;  // Regular mendapat 1 tiket jika hanya 1 tersedia
-                        } else if (availableTickets === 2) {
-                            seatsToShow = 1;  // Regular mendapat 1 tiket jika 2 tersedia (VIP 1)
-                        } else if (availableTickets === 3) {
-                            seatsToShow = 1;  // Regular, VIP, Backstage masing-masing 1
-                        }
-                        break;
-                    case 'VIP':
-                        // VIP hanya mendapat tiket jika tersedia 2 atau lebih
-                        if (availableTickets >= 2) {
-                            seatsToShow = 1;
-                        } else {
-                            seatsToShow = 0;
-                        }
-                        break;
-                    case 'Backstage':
-                        // Backstage hanya mendapat tiket jika tersedia 3
-                        if (availableTickets >= 3) {
-                            seatsToShow = 1;
-                        } else {
-                            seatsToShow = 0;
-                        }
-                        break;
-                    default:
-                        seatsToShow = 0;
-                }
+            if (!section) {
+                throw new Error(`Tipe tiket ${ticketType} tidak ditemukan`);
             }
-            // Untuk tiket 4-9, beri pembagian proporsional
-            else {
-                switch (ticketType) {
-                    case 'Regular':
-                        // Regular mendapat setengah dari yang tersedia (dibulatkan ke bawah untuk memastikan tidak melebihi)
-                        seatsToShow = Math.floor(availableTickets * 0.5);
-                        break;
-                    case 'VIP':
-                        // VIP mendapat sepertiga dari yang tersedia
-                        seatsToShow = Math.floor(availableTickets * 0.33);
-                        break;
-                    case 'Backstage':
-                        // Backstage mendapat sisanya
-                        const regularSeats = Math.floor(availableTickets * 0.5);
-                        const vipSeats = Math.floor(availableTickets * 0.33);
-                        seatsToShow = availableTickets - regularSeats - vipSeats;
-                        break;
-                    default:
-                        seatsToShow = 0;
-                }
-            }
-        }
-        // Pendekatan untuk tiket >= 10
-        else {
-            switch (ticketType) {
-                case 'Regular':
-                    // Gunakan pendekatan persentase dengan pembagian eksak
-                    seatsToShow = Math.floor(availableTickets * 0.5);
-                    break;
-                case 'VIP':
-                    seatsToShow = Math.floor(availableTickets * 0.33);
-                    break;
-                case 'Backstage':
-                    // Ambil sisanya untuk memastikan jumlah kursi persis sama dengan total
-                    const regularSeats = Math.floor(availableTickets * 0.5);
-                    const vipSeats = Math.floor(availableTickets * 0.33);
-                    seatsToShow = availableTickets - regularSeats - vipSeats;
-                    break;
-                default:
-                    seatsToShow = 0;
-            }
-        }
 
-        // Log untuk debugging
-        console.log(`[SeatSelector] Tipe: ${ticketType}, Available: ${availableTickets}, Kursi: ${seatsToShow}`);
+            // Gunakan parameter mintedSeatsArray jika disediakan, jika tidak gunakan state exactMintedSeats
+            const seatsToCheck = mintedSeatsArray || exactMintedSeats;
 
-        setTotalSeats(seatsToShow);
-
-        // Buat peta kursi yang tersedia menggunakan metode sederhana
-        // yang memastikan semua kursi dibuat dengan benar
-        const seatMap = initializeAvailabilityMap(seatsToShow, sectionsForType);
-
-        // Log untuk debugging
-        console.log("[SeatSelector] Initial seat map:", seatMap);
-
-        // Tandai kursi yang sudah dimint sebagai tidak tersedia
-        if (mintedSeats && mintedSeats.length > 0) {
-            mintedSeats.forEach(mintedSeat => {
-                try {
-                    const [section, row, seat] = mintedSeat.split('-');
-                    const rowKey = `${section}-${row}`;
-                    if (seatMap[rowKey] && seatMap[rowKey][seat] !== undefined) {
-                        seatMap[rowKey][seat] = false;
-                        console.log(`[SeatSelector] Marked initial minted seat ${mintedSeat} as unavailable`);
-                    }
-                } catch (err) {
-                    console.error("[SeatSelector] Error marking minted seat:", err);
-                }
+            console.log(`Generating seats for ${ticketType}:`, {
+                availableSeats: section.availableSeats,
+                totalSeats: section.totalSeats,
+                exactMintedSeats: seatsToCheck.length
             });
+
+            // Calculate correct available seats
+            const realAvailableSeats = section.totalSeats - seatsToCheck.length;
+            setSectionAvailableSeats(realAvailableSeats);
+            setSectionTotalSeats(section.totalSeats);
+
+            // Tentukan layout kursi (jumlah baris dan kolom)
+            const totalSeats = section.totalSeats;
+            const aspectRatio = 2; // Rasio lebar:tinggi
+
+            // Hitung jumlah baris dan kolom
+            let cols = Math.ceil(Math.sqrt(totalSeats * aspectRatio));
+            let rows = Math.ceil(totalSeats / cols);
+
+            // Pastikan jumlah kursi mencukupi
+            if (rows * cols < totalSeats) {
+                cols += 1;
+            }
+
+            setRows(rows);
+            setColumns(cols);
+
+            // Buat array kursi dengan kode yang sesuai
+            const allSeats = [];
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    const seatNumber = row * cols + col + 1;
+                    if (seatNumber <= totalSeats) {
+                        // Format: VIP-A12
+                        const rowLabel = String.fromCharCode(65 + Math.floor(row / 10)); // A, B, C, ...
+                        const seatCode = `${ticketType}-${rowLabel}${seatNumber}`;
+
+                        // Cek apakah kursi sudah terjual dengan pencocokan yang tepat
+                        const isMinted = seatsToCheck.includes(seatCode);
+
+                        allSeats.push({
+                            code: seatCode,
+                            row,
+                            col,
+                            isMinted
+                        });
+                    }
+                }
+            }
+
+            console.log(`Generated ${allSeats.length} seats, ${allSeats.filter(s => s.isMinted).length} already minted`);
+            setAvailableSeats(allSeats);
+
+            // Jika seat yang dipilih sudah terjual, reset pilihan
+            if (selectedSeat && allSeats.find(s => s.code === selectedSeat)?.isMinted) {
+                setSelectedSeat('');
+                onSeatSelected('');
+            }
+        } catch (err) {
+            console.error("Error membuat layout kursi:", err);
+            setError(err.message || "Gagal membuat layout kursi");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Handler untuk pemilihan kursi
+    const handleSeatClick = (seat) => {
+        if (seat.isMinted) {
+            console.log(`Kursi ${seat.code} sudah terjual dan tidak dapat dipilih`);
+            return; // Jangan lakukan apa-apa jika kursi sudah di-mint
         }
 
-        setAvailabilityMap(seatMap);
+        // Periksa saldo Solana
+        if (solanaBalance < ticketPrice) {
+            setError(`Saldo Solana tidak mencukupi. Diperlukan: ${ticketPrice} SOL, Saldo Anda: ${solanaBalance.toFixed(4)} SOL`);
+            return;
+        }
+
+        console.log(`Selecting seat: ${seat.code}`);
+        setSelectedSeat(seat.code);
+        onSeatSelected(seat.code);
+    };
+
+    // Handler refresh manual
+    const handleRefresh = async () => {
+        if (loadingRef.current) return;
+
+        console.log("Manual refreshing minted seats...");
+        setLoading(true);
+        await refreshMintedSeats();
         setLoading(false);
-    }, [ticketType, concertId, selectedConcert]);
-
-    // Process mintedSeats when component mounts or when refreshTrigger changes
-    useEffect(() => {
-        if (refreshTrigger > 0 && Object.keys(availabilityMap).length > 0 && mintedSeats && mintedSeats.length > 0) {
-            console.log("[SeatSelector] Processing refreshTrigger:", refreshTrigger);
-            console.log("[SeatSelector] Current mintedSeats:", mintedSeats);
-
-            // Buat salinan peta yang ada
-            const updatedMap = JSON.parse(JSON.stringify(availabilityMap));
-
-            // Tandai kursi yang sudah dimint
-            mintedSeats.forEach(mintedSeat => {
-                try {
-                    const [section, row, seat] = mintedSeat.split('-');
-                    const rowKey = `${section}-${row}`;
-
-                    if (updatedMap[rowKey] && updatedMap[rowKey][seat] !== undefined) {
-                        updatedMap[rowKey][seat] = false;
-                        console.log(`[SeatSelector] Marked refreshed seat ${mintedSeat} as unavailable`);
-                    }
-                } catch (err) {
-                    console.error(`[SeatSelector] Error processing minted seat: ${mintedSeat}`, err);
-                }
-            });
-
-            setAvailabilityMap(updatedMap);
-
-            // Reset seat selection if the currently selected seat has been minted
-            if (selectedSection && selectedRow && selectedSeat) {
-                const currentSelection = `${selectedSection}-${selectedRow}-${selectedSeat}`;
-                if (mintedSeats.includes(currentSelection)) {
-                    setSelectedSeat('');
-                    onSeatSelected('');
-                }
-            }
-        }
-    }, [refreshTrigger, mintedSeats]);
-
-    // Efek untuk memproses mintedSeats saat pertama kali komponen mount
-    useEffect(() => {
-        // Trigger display update with current mintedSeats
-        if (mintedSeats && mintedSeats.length > 0 && availabilityMap && Object.keys(availabilityMap).length > 0) {
-            console.log("[SeatSelector] Processing initial minted seats");
-
-            // Create a deep copy of the seat map
-            const updatedMap = JSON.parse(JSON.stringify(availabilityMap));
-
-            // Mark all minted seats as unavailable
-            mintedSeats.forEach(mintedSeat => {
-                try {
-                    const [section, row, seat] = mintedSeat.split('-');
-                    const rowKey = `${section}-${row}`;
-
-                    if (updatedMap[rowKey] && updatedMap[rowKey][seat] !== undefined) {
-                        updatedMap[rowKey][seat] = false;
-                        console.log(`[SeatSelector] Marked initial seat ${mintedSeat} as unavailable`);
-                    }
-                } catch (err) {
-                    console.error(`[SeatSelector] Error processing initial minted seat: ${mintedSeat}`, err);
-                }
-            });
-
-            setAvailabilityMap(updatedMap);
-        }
-    }, []);
-
-    // When section changes, update available rows
-    useEffect(() => {
-        if (!selectedSection) {
-            setRows([]);
-            return;
-        }
-
-        // Dapatkan semua baris yang ada di section ini
-        const rowsInSection = [];
-        Object.keys(availabilityMap).forEach(key => {
-            // Format key adalah "SECTION-ROW"
-            const [section, row] = key.split('-');
-            if (section === selectedSection) {
-                // Masukkan semua baris, tidak hanya yang memiliki kursi tersedia
-                if (!rowsInSection.includes(row)) {
-                    rowsInSection.push(row);
-                }
-            }
-        });
-
-        console.log(`[SeatSelector] Rows in section ${selectedSection}:`, rowsInSection);
-        setRows(rowsInSection.sort((a, b) => parseInt(a) - parseInt(b))); // Urutkan secara numerik
-        setSelectedRow('');
-        setSelectedSeat('');
-    }, [selectedSection, availabilityMap]);
-
-    // When row changes, update available seats
-    useEffect(() => {
-        if (!selectedSection || !selectedRow) {
-            setSeats([]);
-            return;
-        }
-
-        const rowKey = `${selectedSection}-${selectedRow}`;
-        if (!availabilityMap[rowKey]) {
-            setSeats([]);
-            return;
-        }
-
-        // Ambil SEMUA nomor kursi yang ada dari availability map (termasuk yang tidak tersedia)
-        // Ini memastikan semua kursi ditampilkan, baik yang tersedia maupun yang sudah dimint
-        const allSeats = Object.keys(availabilityMap[rowKey])
-            .sort((a, b) => parseInt(a) - parseInt(b)); // Urutkan secara numerik
-
-        console.log(`[SeatSelector] Row ${rowKey} seats:`, allSeats);
-        console.log(`[SeatSelector] Row ${rowKey} availability:`, availabilityMap[rowKey]);
-
-        setSeats(allSeats);
-        setSelectedSeat('');
-    }, [selectedSection, selectedRow, availabilityMap]);
-
-    // When all three are selected, call the parent's callback
-    useEffect(() => {
-        if (selectedSection && selectedRow && selectedSeat) {
-            const fullSeatNumber = `${selectedSection}-${selectedRow}-${selectedSeat}`;
-            onSeatSelected(fullSeatNumber);
-        } else {
-            onSeatSelected('');
-        }
-    }, [selectedSection, selectedRow, selectedSeat, onSeatSelected]);
-
-    // Efek untuk memeriksa apakah kursi tersedia
-    const isSeatAvailable = (section, row, seat) => {
-        const rowKey = `${section}-${row}`;
-        const seatKey = `${section}-${row}-${seat}`;
-
-        // Cek di availabilityMap
-        const isAvailableInMap = availabilityMap[rowKey] &&
-            availabilityMap[rowKey][seat] !== undefined &&
-            availabilityMap[rowKey][seat] === true;
-
-        // Cek di mintedSeats
-        const isNotMinted = !(mintedSeats && mintedSeats.includes(seatKey));
-
-        return isAvailableInMap && isNotMinted;
     };
 
-    // Fungsi untuk memeriksa apakah kursi sudah dimint
-    const isSeatMinted = (section, row, seat) => {
-        const seatId = `${section}-${row}-${seat}`;
-        return mintedSeats && mintedSeats.includes(seatId);
-    };
+    // Render loading state
+    if (loading) {
+        return (
+            <div className="flex justify-center items-center py-8">
+                <LoadingSpinner />
+                <span className="ml-2 text-gray-300">Memuat layout kursi...</span>
+            </div>
+        );
+    }
+
+    // Render error state
+    if (error) {
+        return (
+            <div className="bg-red-500/10 border border-red-500 rounded-lg p-4">
+                <p className="text-red-500 text-sm">{error}</p>
+            </div>
+        );
+    }
+
+    // Render jika tidak ada konser atau tipe tiket yang dipilih
+    if (!ticketType || !selectedConcert) {
+        return (
+            <div className="text-center py-4">
+                <p className="text-gray-400">Silakan pilih konser dan tipe tiket terlebih dahulu</p>
+            </div>
+        );
+    }
+
+    // Render jika tidak ada kursi yang tersedia
+    if (availableSeats.length === 0) {
+        return (
+            <div className="text-center py-4">
+                <p className="text-gray-400">Tidak ada kursi tersedia untuk kategori ini</p>
+            </div>
+        );
+    }
+
+    // Get price from section
+    const section = selectedConcert.sections.find(s => s.name === ticketType);
+    const price = section ? section.price : 0;
+
+    // Kelompokkan kursi berdasarkan baris untuk tampilan lebih baik
+    const seatsByRow = [];
+    for (let r = 0; r < rows; r++) {
+        seatsByRow.push(availableSeats.filter(seat => seat.row === r));
+    }
 
     return (
-        <div className="space-y-4">
-            <div className="mb-2 text-center">
-                <p className="text-white text-sm">
-                    Kursi tersedia untuk tiket {ticketType}: <span className="font-bold">{totalSeats}</span>
-                </p>
-                {mintedSeats && mintedSeats.length > 0 && (
-                    <p className="text-amber-400 text-sm mt-1">
-                        Kursi telah dimint: <span className="font-bold">{mintedSeats.length}</span>
-                    </p>
+        <div className="seat-selector">
+            {/* Informasi Harga dan Saldo */}
+            <div className="bg-gray-800/50 p-3 rounded-lg mb-4 border border-purple-900/30">
+                <div className="flex justify-between items-center mb-2">
+                    <span className="text-gray-300 text-sm">Harga Tiket:</span>
+                    <span className="text-purple-400 font-medium">{price} SOL</span>
+                </div>
+                <div className="flex justify-between items-center mb-2">
+                    <span className="text-gray-300 text-sm">Saldo Wallet:</span>
+                    <span className={`${solanaBalance < price ? 'text-red-400' : 'text-green-400'} font-medium`}>
+                        {solanaBalance.toFixed(4)} SOL
+                    </span>
+                </div>
+                <div className="flex justify-between items-center">
+                    <div className="flex gap-2 items-center">
+                        <span className="text-gray-300 text-sm">Kursi Tersedia:</span>
+                        <button
+                            onClick={handleRefresh}
+                            className="text-xs bg-gray-700 hover:bg-gray-600 p-1 rounded"
+                            title="Refresh kursi tersedia"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                        </button>
+                    </div>
+                    <span className="text-purple-400 font-medium">
+                        {sectionAvailableSeats}/{sectionTotalSeats}
+                    </span>
+                </div>
+                {solanaBalance < price && (
+                    <div className="mt-2 text-xs text-red-400">
+                        Saldo tidak mencukupi untuk membeli tiket ini
+                    </div>
                 )}
             </div>
 
-            {error && (
-                <div className="bg-red-500/10 border border-red-500 rounded-lg p-3 mb-3">
-                    <p className="text-red-500 text-sm">{error}</p>
+            {/* Stage */}
+            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-center py-2 mb-4 rounded-lg">
+                <span className="text-sm font-medium">PANGGUNG</span>
+            </div>
+
+            {/* Seat Legend */}
+            <div className="flex justify-center mb-4 space-x-6">
+                <div className="flex items-center">
+                    <div className="w-4 h-4 bg-gray-700 rounded-sm mr-2"></div>
+                    <span className="text-gray-400 text-xs">Tersedia</span>
                 </div>
-            )}
+                <div className="flex items-center">
+                    <div className="w-4 h-4 bg-purple-600 rounded-sm mr-2"></div>
+                    <span className="text-gray-400 text-xs">Dipilih</span>
+                </div>
+                <div className="flex items-center">
+                    <div className="w-4 h-4 bg-red-500/50 rounded-sm mr-2"></div>
+                    <span className="text-gray-400 text-xs">Terjual</span>
+                </div>
+            </div>
 
-            {totalSeats > 0 ? (
-                <>
-                    <div>
-                        <label className="block text-gray-300 text-sm font-medium mb-2">
-                            Pilih Section
-                        </label>
-                        <div className="grid grid-cols-3 gap-2">
-                            {sections.map(section => {
-                                // Hitung total kursi tersedia di section ini
-                                const availableInSection = Object.keys(availabilityMap)
-                                    .filter(key => key.startsWith(`${section}-`))
-                                    .reduce((count, key) => {
-                                        return count + Object.values(availabilityMap[key])
-                                            .filter(available => available).length;
-                                    }, 0);
-
-                                return (
-                                    <button
-                                        key={section}
-                                        type="button"
-                                        onClick={() => setSelectedSection(section)}
-                                        className={`py-2 px-4 rounded-lg border text-center transition duration-300 ${selectedSection === section
-                                            ? 'bg-purple-600 border-purple-500 text-white'
-                                            : availableInSection === 0
-                                                ? 'bg-gray-700 border-gray-600 text-gray-300 hover:border-red-500'
-                                                : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-purple-500'
-                                            }`}
-                                    >
-                                        {section} ({availableInSection})
-                                    </button>
-                                );
-                            })}
-                        </div>
+            {/* Seats Grid */}
+            <div className="overflow-auto max-h-60 my-2 pb-2 px-1">
+                {seatsByRow.map((rowSeats, rowIndex) => (
+                    <div
+                        key={`row-${rowIndex}`}
+                        className="grid gap-1 mx-auto mb-1"
+                        style={{
+                            gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+                            maxWidth: `${columns * 28}px`
+                        }}
+                    >
+                        {rowSeats.map(seat => (
+                            <div
+                                key={seat.code}
+                                onClick={() => handleSeatClick(seat)}
+                                className={`
+                                    w-6 h-6 flex items-center justify-center rounded-sm text-xs
+                                    transition-all duration-200 
+                                    ${seat.isMinted
+                                        ? 'bg-red-500/50 text-gray-200 cursor-not-allowed'
+                                        : selectedSeat === seat.code
+                                            ? 'bg-purple-600 text-white cursor-pointer transform hover:scale-110'
+                                            : 'bg-gray-700 text-gray-300 cursor-pointer hover:bg-gray-600'
+                                    }
+                                `}
+                                title={`${seat.code} ${seat.isMinted ? '(Sudah Terjual)' : ''}`}
+                            >
+                                {seat.col + 1}
+                            </div>
+                        ))}
                     </div>
+                ))}
+            </div>
 
-                    {selectedSection && (
-                        <div>
-                            <label className="block text-gray-300 text-sm font-medium mb-2">
-                                Pilih Baris
-                            </label>
-                            <div className="grid grid-cols-5 gap-2">
-                                {rows.length > 0 ? (
-                                    rows.map(row => {
-                                        // Hitung kursi tersedia di baris ini
-                                        const rowKey = `${selectedSection}-${row}`;
-                                        const seatsInRow = availabilityMap[rowKey] || {};
-                                        const availableInRow = Object.values(seatsInRow).filter(available => available).length;
-                                        const totalInRow = Object.keys(seatsInRow).length;
+            {/* Row Labels */}
+            <div className="grid grid-cols-3 gap-2 text-center mt-4">
+                {Array.from({ length: Math.min(rows, 9) }).map((_, index) => (
+                    <div key={index} className="text-xs text-gray-400">
+                        Baris {String.fromCharCode(65 + index)}
+                    </div>
+                ))}
+            </div>
 
-                                        return (
-                                            <button
-                                                key={row}
-                                                type="button"
-                                                onClick={() => setSelectedRow(row)}
-                                                className={`py-2 px-3 rounded-lg border text-center transition duration-300 ${selectedRow === row
-                                                    ? 'bg-purple-600 border-purple-500 text-white'
-                                                    : availableInRow === 0
-                                                        ? 'bg-gray-700 border-gray-600 text-gray-300 hover:border-red-500'
-                                                        : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-purple-500'
-                                                    }`}
-                                            >
-                                                {row} ({availableInRow}/{totalInRow})
-                                            </button>
-                                        );
-                                    })
-                                ) : (
-                                    <div className="col-span-5 text-center text-amber-400 py-3">
-                                        Tidak ada baris tersedia di section ini
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    {selectedSection && selectedRow && (
-                        <div>
-                            <label className="block text-gray-300 text-sm font-medium mb-2">
-                                Pilih Kursi
-                            </label>
-                            <div className="grid grid-cols-5 gap-2">
-                                {seats.length > 0 ? (
-                                    Object.keys(availabilityMap[`${selectedSection}-${selectedRow}`] || {}).map(seat => {
-                                        const seatKey = `${selectedSection}-${selectedRow}-${seat}`;
-                                        // Periksa dua kondisi: status kursi di availabilityMap dan apakah ada di mintedSeats
-                                        const isAvailable = isSeatAvailable(selectedSection, selectedRow, seat);
-                                        const isMinted = isSeatMinted(selectedSection, selectedRow, seat);
-
-                                        // Kursi tidak tersedia jika statusnya false di availabilityMap atau ada di mintedSeats
-                                        const isDisabled = !isAvailable || isMinted;
-
-                                        // Debug log
-                                        console.log(`Seat ${seatKey}: available=${isAvailable}, minted=${isMinted}, disabled=${isDisabled}`);
-
-                                        return (
-                                            <button
-                                                key={seat}
-                                                type="button"
-                                                disabled={isDisabled}
-                                                onClick={() => {
-                                                    console.log(`Selected seat: ${selectedSection}-${selectedRow}-${seat}`);
-                                                    console.log(`Is available in map: ${availabilityMap[`${selectedSection}-${selectedRow}`][seat]}`);
-                                                    console.log(`Is not in mintedSeats: ${!mintedSeats.includes(`${selectedSection}-${selectedRow}-${seat}`)}`);
-                                                    setSelectedSeat(seat);
-                                                }}
-                                                className={`py-2 px-3 rounded-lg border text-center transition duration-300 
-                                                ${isDisabled
-                                                        ? 'bg-gray-700 border-gray-600 text-gray-400 cursor-not-allowed'
-                                                        : selectedSeat === seat
-                                                            ? 'bg-purple-600 border-purple-500 text-white'
-                                                            : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-purple-500'
-                                                    }`}
-                                            >
-                                                {seat}
-                                                {isDisabled && (
-                                                    <span className="block text-xs mt-1">Sold</span>
-                                                )}
-                                            </button>
-                                        );
-                                    })
-                                ) : (
-                                    <div className="col-span-5 text-center text-amber-400 py-3">
-                                        Tidak ada kursi tersedia di baris ini
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    )}
-                </>
-            ) : (
-                <div className="text-center p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-                    <p className="text-amber-400">
-                        Tidak ada kursi tersedia untuk tipe tiket ini.
-                    </p>
-                    <p className="text-gray-400 text-sm mt-2">
-                        Coba pilih tipe tiket lain atau konser lainnya.
-                    </p>
+            {/* Selected Seat Info */}
+            {selectedSeat && (
+                <div className="mt-4 text-center">
+                    <button
+                        onClick={() => onSeatSelected(selectedSeat)}
+                        className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-md text-sm transition-colors"
+                        disabled={solanaBalance < price}
+                    >
+                        Pilih Kursi {selectedSeat}
+                    </button>
                 </div>
             )}
 
-            {loading && (
-                <div className="flex justify-center py-4">
-                    <svg className="animate-spin h-5 w-5 text-purple-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                </div>
-            )}
-
-            {selectedSection && selectedRow && selectedSeat && (
-                <div className="bg-purple-900/30 rounded-lg p-3 border border-purple-500/50">
-                    <p className="text-white text-sm text-center">
-                        Kursi yang dipilih: <span className="font-bold">{selectedSection}-{selectedRow}-{selectedSeat}</span>
-                    </p>
-                </div>
-            )}
-
-            {/* Information about minted seats */}
-            {mintedSeats && mintedSeats.length > 0 && (
-                <div className="bg-gray-800/30 rounded-lg p-3 border border-gray-700">
-                    <p className="text-gray-300 text-sm">
-                        <span className="text-gray-400">■</span> Kursi yang sudah dimint (warna abu-abu)
-                    </p>
-                </div>
-            )}
+            {/* Auto-refresh notification */}
+            <div className="mt-6 text-center">
+                <p className="text-xs text-gray-500">Tampilan kursi disegarkan otomatis setiap 10 detik</p>
+            </div>
         </div>
     );
 };

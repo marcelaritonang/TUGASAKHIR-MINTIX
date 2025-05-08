@@ -1,42 +1,95 @@
-// utils/adminAuth.js
-import { PublicKey } from '@solana/web3.js';
+// src/utils/adminAuth.js
+import { v4 as uuidv4 } from 'uuid';
 
-// List admin public keys (hanya pubkey yang diizinkan)
-const ADMIN_PUBLIC_KEYS = [
-    "2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU", // Public key Anda
-    // Tambahkan public key admin lain di sini jika diperlukan
+// Daftar admin wallet - hanya wallet address Anda
+export const ADMIN_PUBLIC_KEYS = [
+    '2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU'  // Admin Wallet Anda
 ];
 
-// Periksa apakah wallet adalah admin
-export const isAdmin = (wallet) => {
-    if (!wallet || !wallet.publicKey) return false;
-
-    const walletPubkey = wallet.publicKey.toString();
-    return ADMIN_PUBLIC_KEYS.includes(walletPubkey);
+// Cek jika wallet address adalah admin
+export const isAdmin = (walletAddress) => {
+    const isAdminWallet = ADMIN_PUBLIC_KEYS.includes(walletAddress);
+    console.log(`Checking if ${walletAddress} is admin: ${isAdminWallet}`);
+    return isAdminWallet;
 };
 
-// Admin login status management
-let adminLoginStatus = false;
+// Simpan session admin ke localStorage
+export const verifyAdminLogin = ({ publicKey }) => {
+    try {
+        const wallet = publicKey.toString();
+        console.log(`Verifying admin login for wallet: ${wallet}`);
 
-export const setAdminLoginStatus = (status) => {
-    adminLoginStatus = status;
-};
+        // Hanya izinkan jika public key ada di daftar admin
+        if (!ADMIN_PUBLIC_KEYS.includes(wallet)) {
+            console.error("Unauthorized wallet attempting admin access:", wallet);
+            return false;
+        }
 
-export const getAdminLoginStatus = () => {
-    return adminLoginStatus;
-};
+        // Buat session info
+        const adminAuth = {
+            id: uuidv4(),
+            wallet,
+            loginTime: new Date().toISOString(),
+            expiryTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 jam
+        };
 
-// Fungsi verifikasi admin - tanpa password, hanya berdasarkan pubkey
-export const verifyAdminLogin = (wallet) => {
-    if (isAdmin(wallet)) {
-        setAdminLoginStatus(true);
+        // Simpan ke localStorage
+        localStorage.setItem('adminAuth', JSON.stringify(adminAuth));
+        console.log("Admin session created and saved to localStorage");
+
         return true;
+    } catch (error) {
+        console.error("Admin login error:", error);
+        return false;
     }
-
-    return false;
 };
 
-// Fungsi untuk logout admin
+// Ambil info admin dari localStorage
+export const getAdminAuth = () => {
+    try {
+        const adminAuth = JSON.parse(localStorage.getItem('adminAuth'));
+
+        // Jika tidak ada session atau session expired
+        if (!adminAuth) return null;
+
+        const now = new Date();
+        const expiryTime = new Date(adminAuth.expiryTime);
+
+        if (now > expiryTime) {
+            // Session expired, hapus
+            localStorage.removeItem('adminAuth');
+            return null;
+        }
+
+        return adminAuth;
+    } catch (error) {
+        console.error("Error getting admin auth:", error);
+        return null;
+    }
+};
+
+// Perpanjang session admin
+export const extendAdminSession = () => {
+    try {
+        const adminAuth = getAdminAuth();
+
+        if (!adminAuth) return false;
+
+        // Perpanjang waktu kadaluarsa 24 jam dari sekarang
+        adminAuth.expiryTime = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+        // Simpan kembali ke localStorage
+        localStorage.setItem('adminAuth', JSON.stringify(adminAuth));
+
+        return true;
+    } catch (error) {
+        console.error("Error extending admin session:", error);
+        return false;
+    }
+};
+
+// Logout admin
 export const logoutAdmin = () => {
-    setAdminLoginStatus(false);
+    localStorage.removeItem('adminAuth');
+    console.log("Admin logged out, session removed");
 };
