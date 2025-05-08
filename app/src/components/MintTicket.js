@@ -1,15 +1,20 @@
+// src/components/MintTicket.js
 import React, { useState, useEffect } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { Keypair, PublicKey, SystemProgram } from '@solana/web3.js';
-import { getProgram } from '../utils/anchor';
-import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
-import * as anchor from '@project-serum/anchor';
-import { motion } from 'framer-motion';
+import { Connection, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useParams, useNavigate } from 'react-router-dom';
 
-// Import SeatSelector component
-import SeatSelector from '../components/SeatSelector';
+// Import services and context
+import ApiService from '../services/ApiService';
+import AuthService from '../services/AuthService';
+import blockchainService from '../services/blockchain';
+import { useConcerts } from '../context/ConcertContext';
+
+// Import components
+import SeatSelector from './SeatSelector';
+import LoadingSpinner from './common/LoadingSpinner';
 
 // Gradient text component
 const GradientText = ({ text, className = "" }) => {
@@ -20,169 +25,420 @@ const GradientText = ({ text, className = "" }) => {
     );
 };
 
-// Loading Spinner component
-const LoadingSpinner = ({ size = "h-5 w-5", color = "text-purple-500" }) => (
-    <svg className={`animate-spin ${size} ${color}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-    </svg>
+// Loading overlay component untuk UX yang lebih baik
+const LoadingOverlay = ({ message = "Loading..." }) => (
+    <div className="absolute inset-0 bg-gray-900/80 flex items-center justify-center z-50 rounded-xl">
+        <div className="text-center">
+            <LoadingSpinner size={8} />
+            <p className="mt-4 text-white">{message}</p>
+        </div>
+    </div>
 );
 
 const MintTicket = () => {
     const { concertId } = useParams();
     const navigate = useNavigate();
+    const wallet = useWallet();
+    const { approvedConcerts, loadApprovedConcerts, loadMyTickets } = useConcerts();
+
+    // Mint state
     const [concert, setConcert] = useState(concertId || '');
-    const [ticketType, setTicketType] = useState('Regular');
+    const [ticketType, setTicketType] = useState('');
     const [seatNumber, setSeatNumber] = useState('');
     const [loading, setLoading] = useState(false);
+    const [initialLoading, setInitialLoading] = useState(true); // Separate loading state for initial load
     const [error, setError] = useState('');
     const [success, setSuccess] = useState(false);
-    const wallet = useWallet();
+    const [paymentComplete, setPaymentComplete] = useState(false);
+    const [txSignature, setTxSignature] = useState('');
 
-    // State untuk loading daftar konser
-    const [concerts, setConcerts] = useState([]);
-    const [loadingConcerts, setLoadingConcerts] = useState(false);
+    // Concert data state
     const [selectedConcert, setSelectedConcert] = useState(null);
+    const [availabilityInfo, setAvailabilityInfo] = useState({});
+    const [solanaBalance, setSolanaBalance] = useState(0);
 
-    // State untuk menunjukkan apakah tampilan pemilihan kursi telah dibuka
+    // UI state
     const [seatSelectorOpen, setSeatSelectorOpen] = useState(false);
-
-    // Tambahkan state untuk melacak kursi yang sudah dimint
     const [mintedSeats, setMintedSeats] = useState([]);
     const [refreshTrigger, setRefreshTrigger] = useState(0);
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [refreshInterval, setRefreshInterval] = useState(null); // NEW: Interval untuk refresh
 
-    // Static concerts data (copied from ConcertList.js)
-    const staticConcerts = [
-        { id: 'static-1', name: 'EDM Festival 2025', venue: 'Metaverse Arena', date: 'Jun 15, 2025', available: 120, total: 500, category: 'festival', creator: 'Admin' },
-        { id: 'static-2', name: 'Rock Legends', venue: 'Crypto Stadium', date: 'Jul 22, 2025', available: 75, total: 300, category: 'rock', creator: 'Admin' },
-        { id: 'static-3', name: 'Jazz Night', venue: 'NFT Concert Hall', date: 'Aug 05, 2025', available: 50, total: 100, category: 'jazz', creator: 'Admin' },
-        { id: 'static-4', name: 'Classical Symphony', venue: 'Blockchain Theater', date: 'Sep 18, 2025', available: 25, total: 400, category: 'classical', creator: 'Admin' },
-        { id: 'static-5', name: 'Hip Hop Summit', venue: 'Web3 Arena', date: 'Oct 10, 2025', available: 200, total: 800, category: 'hiphop', creator: 'Admin' },
-        { id: 'static-6', name: 'Electronic Music Night', venue: 'Digital Dome', date: 'Nov 20, 2025', available: 150, total: 500, category: 'electronic', creator: 'Admin' },
-        { id: 'static-7', name: 'Pop Sensation', venue: 'Virtual Stadium', date: 'Dec 12, 2025', available: 300, total: 1000, category: 'pop', creator: 'Admin' },
-        { id: 'static-8', name: 'Country Music Festival', venue: 'Decentralized Park', date: 'Jan 25, 2026', available: 100, total: 350, category: 'country', creator: 'Admin' },
-    ];
+    // Pengaturan Solana Connection
+    const solanaConnection = new Connection(
+        process.env.REACT_APP_SOLANA_RPC_URL || 'https://api.devnet.solana.com',
+        'confirmed'
+    );
 
-    // Fungsi untuk mengambil daftar kursi yang sudah dimint
-    const fetchMintedSeats = async (concertId) => {
-        try {
-            // Set loading state untuk menunjukkan sedang memuat data
-            setLoading(true);
+    // Efek untuk mengambil konser yang dipilih saat URL parameter berubah
+    useEffect(() => {
+        const loadSelectedConcert = async () => {
+            setInitialLoading(true);
 
-            console.log(`Fetching minted seats for concert: ${concertId}`);
+            if (concertId) {
+                setConcert(concertId);
+                console.log("Looking for concert with ID:", concertId);
 
-            // Untuk tiket statis, kita gunakan localStorage
-            if (concertId.startsWith('static-')) {
-                const savedTickets = JSON.parse(localStorage.getItem('mintedStaticTickets') || '[]');
-                const seatsForConcert = savedTickets
-                    .filter(ticket => ticket.concertId === concertId)
-                    .map(ticket => ticket.seatNumber);
+                // Cari konser dalam approvedConcerts
+                const selected = approvedConcerts.find(c => c.id === concertId);
 
-                console.log(`Found ${seatsForConcert.length} minted seats for concert ${concertId}:`, seatsForConcert);
-                setMintedSeats(seatsForConcert);
-                setLoading(false);
-
-                // Trigger refresh pada SeatSelector
-                setRefreshTrigger(prev => prev + 1);
-                return;
-            }
-
-            // Untuk tiket blockchain, kita perlu kueri dari blockchain
-            if (wallet.connected) {
-                try {
-                    const program = getProgram(wallet);
-
-                    // Metode simulasi menggunakan localStorage 
-                    const savedBlockchainTickets = JSON.parse(localStorage.getItem(`blockchain_tickets_${concertId}`) || '[]');
-
-                    console.log(`Found ${savedBlockchainTickets.length} blockchain tickets for concert ${concertId}:`, savedBlockchainTickets);
-                    setMintedSeats(savedBlockchainTickets);
-
-                    // Trigger refresh pada SeatSelector
-                    setRefreshTrigger(prev => prev + 1);
-                } catch (err) {
-                    console.error("Error fetching blockchain tickets:", err);
-                    setMintedSeats([]);
-                } finally {
-                    setLoading(false);
+                if (selected) {
+                    console.log("Concert found in approved concerts:", selected.name);
+                    setSelectedConcert(selected);
+                    calculateAvailability(selected);
+                } else {
+                    console.log("Concert not found in context, fetching from API");
+                    // Jika tidak ditemukan, coba ambil dari API
+                    await fetchConcertDetail(concertId);
                 }
-            } else {
-                console.log("Wallet not connected, can't fetch blockchain tickets");
-                setMintedSeats([]);
-                setLoading(false);
             }
-        } catch (error) {
-            console.error("Error fetching minted seats:", error);
-            setMintedSeats([]);
+
+            setInitialLoading(false);
+        };
+
+        loadSelectedConcert();
+
+        // Cek authentication
+        const isAuth = AuthService.isAuthenticated();
+        setIsAuthenticated(isAuth);
+        console.log("Is authenticated:", isAuth);
+
+    }, [concertId, approvedConcerts]);
+
+    // NEW: Setup polling untuk refresh data konser
+    useEffect(() => {
+        // Setup interval untuk refresh konser setiap 10 detik
+        const interval = setInterval(() => {
+            // Silent refresh dari approvedConcerts jika ada concertId
+            if (concertId) {
+                loadApprovedConcerts(true);
+            }
+        }, 10000);
+
+        setRefreshInterval(interval);
+
+        // Cleanup interval saat component unmount
+        return () => {
+            clearInterval(interval);
+        };
+    }, [concertId]);
+
+    // UPDATE: Effect untuk merespon perubahan dalam approvedConcerts
+    useEffect(() => {
+        if (concertId && approvedConcerts.length > 0) {
+            const updatedConcert = approvedConcerts.find(c => c.id === concertId);
+            if (updatedConcert) {
+                console.log("Found updated concert data:", updatedConcert.name);
+                setSelectedConcert(updatedConcert);
+                calculateAvailability(updatedConcert);
+            }
+        }
+    }, [approvedConcerts, concertId]);
+
+    // Mengambil saldo Solana saat wallet terhubung
+    useEffect(() => {
+        const fetchBalance = async () => {
+            if (wallet && wallet.publicKey) {
+                try {
+                    const balance = await solanaConnection.getBalance(wallet.publicKey);
+                    setSolanaBalance(balance / LAMPORTS_PER_SOL);
+                    console.log(`Saldo Solana: ${balance / LAMPORTS_PER_SOL} SOL`);
+                } catch (err) {
+                    console.error("Error fetching Solana balance:", err);
+                }
+            }
+        };
+
+        fetchBalance();
+    }, [wallet, wallet.publicKey]);
+
+    // Menghitung availability untuk setiap section
+    const calculateAvailability = (concert) => {
+        if (!concert || !concert.sections) return;
+
+        const info = {};
+        let totalAvailable = 0;
+        let totalSeats = 0;
+
+        concert.sections.forEach(section => {
+            info[section.name] = {
+                available: section.availableSeats,
+                total: section.totalSeats,
+                percentage: Math.round((section.availableSeats / section.totalSeats) * 100)
+            };
+
+            totalAvailable += section.availableSeats;
+            totalSeats += section.totalSeats;
+        });
+
+        info.total = {
+            available: totalAvailable,
+            total: totalSeats,
+            percentage: totalSeats > 0 ? Math.round((totalAvailable / totalSeats) * 100) : 0
+        };
+
+        setAvailabilityInfo(info);
+        console.log("Availability info calculated:", info);
+    };
+
+    // Fungsi untuk mengambil detail konser dari API
+    const fetchConcertDetail = async (id) => {
+        try {
+            setLoading(true);
+            console.log("Fetching concert detail for ID:", id);
+
+            // Gunakan ApiService untuk mendapatkan data konser
+            const concertData = await ApiService.getConcert(id);
+            console.log("Concert data received from API:", concertData);
+
+            if (concertData) {
+                const formattedConcert = {
+                    id: concertData._id,
+                    name: concertData.name,
+                    venue: concertData.venue,
+                    date: concertData.date,
+                    description: concertData.description,
+                    sections: concertData.sections || [],
+                    posterUrl: concertData.posterUrl,
+                    status: concertData.status
+                };
+
+                console.log("Formatted concert:", formattedConcert);
+                setSelectedConcert(formattedConcert);
+                calculateAvailability(formattedConcert);
+            }
+        } catch (err) {
+            console.error("Error mengambil detail konser:", err);
+            setError("Gagal mengambil informasi konser. Silakan coba lagi.");
+        } finally {
             setLoading(false);
         }
     };
 
-    // Efek untuk mengambil konser yang dipilih saat URL parameter berubah
+    // Autentikasi ketika wallet terhubung
     useEffect(() => {
-        if (concertId) {
-            setConcert(concertId);
-        }
-    }, [concertId]);
+        const authenticate = async () => {
+            if (wallet.connected && wallet.publicKey && !isAuthenticated) {
+                try {
+                    console.log("Attempting auto-login with wallet:", wallet.publicKey.toString());
+                    const success = await AuthService.loginTest(wallet.publicKey.toString());
+                    setIsAuthenticated(success);
+                    console.log("Auto-login result:", success);
+                } catch (err) {
+                    console.error("Error saat login:", err);
+                }
+            }
+        };
 
-    // Fetch daftar kursi yang sudah dimint saat pertama kali atau saat ganti konser
+        authenticate();
+    }, [wallet.connected, wallet.publicKey, isAuthenticated]);
+
+    // Mengambil kursi yang sudah di-mint
     useEffect(() => {
         if (concert) {
             fetchMintedSeats(concert);
         }
-    }, [concert, wallet.connected]);
+    }, [concert, refreshTrigger]);
 
-    // Tambahkan useEffect baru untuk menangani navigasi halaman
-    useEffect(() => {
-        // Cleanup function untuk menyimpan state saat navigasi
-        return () => {
-            // Jika ada concertId dan selectedConcert, simpan state sementara
-            if (concert && selectedConcert) {
-                try {
-                    // Simpan state terakhir untuk referensi
-                    sessionStorage.setItem('lastViewedConcert', concert);
-                    sessionStorage.setItem('lastTicketType', ticketType);
-                } catch (err) {
-                    console.error("Error saving session state:", err);
-                }
+    // Fungsi untuk mengambil kursi yang sudah di-mint
+    const fetchMintedSeats = async (concertId) => {
+        try {
+            console.log("Mengambil kursi terjual untuk konser:", concertId);
+            // Panggil API untuk mendapatkan kursi yang sudah di-mint
+            const response = await ApiService.getMintedSeats(concertId);
+
+            if (response && response.seats) {
+                console.log(`Ditemukan ${response.seats.length} kursi yang sudah di-mint:`, response.seats);
+                setMintedSeats(response.seats);
+                updateAvailabilityFromMintedSeats(response.seats);
+            } else {
+                console.log("Tidak ada data kursi terjual dari API");
+                setMintedSeats([]);
             }
-        };
-    }, [concert, selectedConcert, ticketType]);
-
-    // Efek untuk memuat state dari session storage saat mount
-    useEffect(() => {
-        // Jika tidak ada concertId dari URL, coba ambil dari session storage
-        if (!concertId) {
-            try {
-                const lastConcert = sessionStorage.getItem('lastViewedConcert');
-                const lastType = sessionStorage.getItem('lastTicketType');
-
-                if (lastConcert) {
-                    console.log("Restoring last viewed concert:", lastConcert);
-                    setConcert(lastConcert);
-                }
-
-                if (lastType) {
-                    setTicketType(lastType);
-                }
-            } catch (err) {
-                console.error("Error restoring from session storage:", err);
-            }
+        } catch (err) {
+            console.error("Error mengambil kursi yang sudah di-mint:", err);
+            setMintedSeats([]);
         }
-    }, [concertId]);
-
-    // Handler untuk pemilihan kursi
-    const handleSeatSelected = (selectedSeat) => {
-        setSeatNumber(selectedSeat);
     };
 
+    // Fungsi untuk memperbarui availability berdasarkan kursi yang sudah di-mint
+    const updateAvailabilityFromMintedSeats = (seats) => {
+        if (!selectedConcert || !selectedConcert.sections) return;
+
+        // Buat salinan sections untuk diperbarui
+        const updatedSections = selectedConcert.sections.map(section => {
+            // Hitung jumlah kursi yang sudah terjual untuk section ini
+            const soldSeats = seats.filter(seat => seat.startsWith(`${section.name}-`)).length;
+            // Perbarui jumlah kursi yang tersedia
+            const availableSeats = Math.max(0, section.totalSeats - soldSeats);
+
+            return {
+                ...section,
+                availableSeats: availableSeats
+            };
+        });
+
+        // Perbarui selectedConcert dengan sections yang telah diperbarui
+        setSelectedConcert(prev => ({
+            ...prev,
+            sections: updatedSections
+        }));
+
+        // Hitung ulang availability info
+        calculateAvailability({
+            ...selectedConcert,
+            sections: updatedSections
+        });
+    };
+
+    // Handler untuk pemilihan kursi dengan dukungan pembaruan availability
+    const handleSeatSelected = (selectedSeat, updateInfo = null) => {
+        // Jika ada data pembaruan availability
+        if (updateInfo && updateInfo.updateAvailability) {
+            console.log("Memperbarui ketersediaan kursi:", updateInfo);
+
+            // Perbarui sections dalam selectedConcert
+            if (selectedConcert && selectedConcert.sections) {
+                const updatedSections = selectedConcert.sections.map(section => {
+                    if (section.name === updateInfo.ticketType) {
+                        return {
+                            ...section,
+                            availableSeats: updateInfo.availableSeats
+                        };
+                    }
+                    return section;
+                });
+
+                // Perbarui selectedConcert
+                setSelectedConcert(prev => ({
+                    ...prev,
+                    sections: updatedSections
+                }));
+
+                // Hitung ulang availability info
+                calculateAvailability({
+                    ...selectedConcert,
+                    sections: updatedSections
+                });
+            }
+
+            return;
+        }
+
+        // Jika tidak ada seat yang dipilih, abaikan
+        if (!selectedSeat) return;
+
+        console.log("Kursi dipilih:", selectedSeat);
+
+        // Debug
+        console.log("mintedSeats:", mintedSeats);
+        console.log("ticketType:", ticketType);
+
+        // Verifikasi bahwa array mintedSeats ada dan pemeriksaan apakah kursi sudah terjual
+        if (Array.isArray(mintedSeats)) {
+            const isMinted = mintedSeats.some(mintedSeat => {
+                return mintedSeat === selectedSeat ||
+                    (mintedSeat.startsWith(`${ticketType}-`) &&
+                        mintedSeat.includes(selectedSeat.split('-')[1]));
+            });
+
+            if (isMinted) {
+                console.log("Kursi ini sudah terjual!");
+                setError("Kursi ini sudah di-mint. Silakan pilih kursi lain.");
+                return;
+            }
+        }
+
+        setSeatNumber(selectedSeat);
+        console.log("Kursi terpilih diupdate:", selectedSeat);
+    };
+
+    // Fungsi untuk membuat transaksi pembayaran Solana
+    const createSolanaPayment = async (receiverAddress, amount) => {
+        if (!wallet.publicKey || !wallet.signTransaction) {
+            throw new Error("Wallet tidak terhubung atau tidak mendukung signTransaction");
+        }
+
+        // Konversi jumlah SOL ke lamports
+        const lamports = Math.round(amount * LAMPORTS_PER_SOL);
+
+        // Alamat penerima (diubah ke PublicKey)
+        const toPublicKey = new PublicKey(receiverAddress);
+
+        // Buat transaksi
+        const transaction = new Transaction().add(
+            SystemProgram.transfer({
+                fromPubkey: wallet.publicKey,
+                toPubkey: toPublicKey,
+                lamports: lamports
+            })
+        );
+
+        // Set blockhash terbaru
+        const { blockhash } = await solanaConnection.getLatestBlockhash();
+        transaction.recentBlockhash = blockhash;
+        transaction.feePayer = wallet.publicKey;
+
+        // Tanda tangani transaksi
+        const signedTransaction = await wallet.signTransaction(transaction);
+
+        // Kirim transaksi ke jaringan
+        const signature = await solanaConnection.sendRawTransaction(signedTransaction.serialize());
+
+        // Tunggu konfirmasi
+        await solanaConnection.confirmTransaction(signature);
+
+        return signature;
+    };
+
+    // Handler untuk mint tiket dengan pembayaran Solana
     const handleMintTicket = async (e) => {
         e.preventDefault();
 
-        // Validasi apakah pengguna telah memilih kursi
-        if (!seatNumber) {
-            setError("Anda harus memilih kursi terlebih dahulu");
+        // Validasi input
+        if (!concert) {
+            setError("Silakan pilih konser terlebih dahulu");
             return;
+        }
+
+        if (!ticketType) {
+            setError("Silakan pilih tipe tiket terlebih dahulu");
+            return;
+        }
+
+        if (!seatNumber) {
+            setError("Silakan pilih kursi terlebih dahulu");
+            return;
+        }
+
+        // Periksa jika kursi sudah di-mint
+        if (Array.isArray(mintedSeats)) {
+            const isMinted = mintedSeats.some(mintedSeat => {
+                return mintedSeat === seatNumber ||
+                    (mintedSeat.startsWith(`${ticketType}-`) &&
+                        mintedSeat.includes(seatNumber.split('-')[1]));
+            });
+
+            if (isMinted) {
+                setError("Kursi ini sudah di-mint. Silakan pilih kursi lain.");
+                return;
+            }
+        }
+
+        // Periksa autentikasi
+        if (!isAuthenticated) {
+            try {
+                console.log("Mencoba autentikasi untuk mint tiket");
+                const success = await AuthService.loginTest(wallet.publicKey.toString());
+                if (!success) {
+                    setError("Gagal melakukan otentikasi. Silakan coba lagi.");
+                    return;
+                }
+                setIsAuthenticated(true);
+            } catch (err) {
+                setError("Gagal melakukan otentikasi. Silakan coba lagi.");
+                return;
+            }
         }
 
         setLoading(true);
@@ -190,299 +446,192 @@ const MintTicket = () => {
         setSuccess(false);
 
         try {
-            // Check if selected concert is a static concert
-            if (concert.startsWith('static-')) {
-                // Untuk tiket statis, kita simpan ke localStorage
-                try {
-                    // Cek dulu apakah kursi ini sudah di-mint sebelumnya
-                    const savedTickets = JSON.parse(localStorage.getItem('mintedStaticTickets') || '[]');
-                    const seatAlreadyMinted = savedTickets.some(
-                        ticket => ticket.concertId === concert && ticket.seatNumber === seatNumber
-                    );
-
-                    if (seatAlreadyMinted) {
-                        setError(`Kursi ${seatNumber} sudah di-mint sebelumnya.`);
-                        setLoading(false);
-                        return;
-                    }
-
-                    // Tambahkan tiket baru ke daftar
-                    savedTickets.push({
-                        concertId: concert,
-                        concertName: selectedConcert.name,
-                        ticketType,
-                        seatNumber,
-                        date: new Date().toISOString()
-                    });
-
-                    localStorage.setItem('mintedStaticTickets', JSON.stringify(savedTickets));
-                    console.log(`Successfully saved ticket ${seatNumber} for concert ${concert} to localStorage`);
-
-                    // Update mintedSeats state
-                    setMintedSeats(prev => {
-                        const updatedSeats = [...prev, seatNumber];
-                        console.log("Updated mintedSeats:", updatedSeats);
-                        return updatedSeats;
-                    });
-
-                    // Update selected concert's available tickets
-                    if (selectedConcert) {
-                        const updatedConcert = {
-                            ...selectedConcert,
-                            available: selectedConcert.available - 1
-                        };
-                        setSelectedConcert(updatedConcert);
-
-                        // Update the concerts list
-                        setConcerts(prevConcerts =>
-                            prevConcerts.map(c => c.id === updatedConcert.id ? updatedConcert : c)
-                        );
-                    }
-
-                    // Show success message
-                    setSuccess(true);
-
-                    // Trigger refresh pada SeatSelector
-                    setRefreshTrigger(prev => prev + 1);
-
-                    // Reset form after delay
-                    setTimeout(() => {
-                        // Keep the concert selection but reset other fields
-                        setTicketType('Regular');
-                        setSeatNumber('');
-                        setSuccess(false);
-                        setSeatSelectorOpen(false);
-
-                        // Fetch minted seats again to ensure we have the latest data
-                        fetchMintedSeats(concert);
-                    }, 3000);
-
-                } catch (err) {
-                    console.error("Error saving ticket to localStorage:", err);
-                    setError("Terjadi kesalahan saat menyimpan tiket. Silakan coba lagi.");
-                    setLoading(false);
-                }
-
-                setLoading(false);
-                return;
+            // Dapatkan harga tiket
+            const section = selectedConcert.sections.find(s => s.name === ticketType);
+            if (!section) {
+                throw new Error("Tipe tiket tidak ditemukan");
             }
 
-            // For blockchain concerts, we need a connected wallet
-            if (!wallet.connected) {
-                throw new Error("Silakan hubungkan wallet Anda terlebih dahulu");
+            const ticketPrice = section.price || 0.01; // Default ke 0.01 SOL jika tidak ada harga
+
+            // Periksa saldo
+            if (solanaBalance < ticketPrice) {
+                throw new Error(`Saldo Solana tidak mencukupi. Diperlukan: ${ticketPrice} SOL, Saldo Anda: ${solanaBalance.toFixed(4)} SOL`);
             }
 
-            const program = getProgram(wallet);
+            // Lakukan pembayaran Solana
+            // Di dunia nyata, Anda akan menggunakan alamat penyelenggara konser yang sebenarnya di sini
+            const organizerAddress = "2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU"; // Contoh alamat
 
-            // Validate concert selection
-            if (!concert) {
-                throw new Error("Silakan pilih konser terlebih dahulu");
+            console.log(`Melakukan pembayaran ${ticketPrice} SOL ke ${organizerAddress}`);
+
+            const signature = await createSolanaPayment(organizerAddress, ticketPrice);
+            console.log("Pembayaran berhasil dengan signature:", signature);
+
+            // Simpan signature untuk referensi
+            setTxSignature(signature);
+            setPaymentComplete(true);
+
+            // Persiapkan data untuk API
+            const mintData = {
+                concertId: concert,
+                sectionName: ticketType,
+                seatNumber: seatNumber,
+                quantity: 1,
+                transactionSignature: signature
+            };
+
+            console.log("Mencoba mint tiket dengan data:", mintData);
+
+            // Panggil API untuk mint tiket
+            const result = await ApiService.mintTicket(mintData);
+
+            if (!result.success && !result.tickets) {
+                throw new Error(result.msg || "Gagal membuat tiket");
             }
 
-            // Validate the concert ID is a valid public key
-            let concertPublicKey;
-            try {
-                concertPublicKey = new PublicKey(concert);
-            } catch (err) {
-                throw new Error("Invalid concert public key");
-            }
+            console.log("Hasil mint tiket:", result);
 
-            // Generate keypairs untuk mint dan token account
-            const mintKeypair = Keypair.generate();
-            const tokenAccountKeypair = Keypair.generate();
+            // Perbarui daftar kursi yang sudah di-mint
+            setMintedSeats(prev => [...prev, seatNumber]);
 
-            console.log("Mint pubkey:", mintKeypair.publicKey.toString());
-            console.log("Token account pubkey:", tokenAccountKeypair.publicKey.toString());
-
-            // 1. Pertama, jalankan initializeMint
-            console.log("Initializing mint...");
-            const initMintTx = await program.methods
-                .initializeMint()
-                .accounts({
-                    authority: wallet.publicKey,
-                    buyer: wallet.publicKey,
-                    mint: mintKeypair.publicKey,
-                    tokenAccount: tokenAccountKeypair.publicKey,
-                    tokenProgram: TOKEN_PROGRAM_ID,
-                    systemProgram: SystemProgram.programId,
-                    rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-                })
-                .signers([mintKeypair, tokenAccountKeypair])
-                .rpc();
-
-            console.log("Mint initialized: ", initMintTx);
-
-            // 2. Kemudian, buat ticket
-            const ticketKeypair = Keypair.generate();
-
-            console.log("Creating ticket...");
-            // Kirim seatNumber yang sudah dipilih melalui UI pemilihan kursi
-            const seatOption = seatNumber || null;
-
-            const createTicketTx = await program.methods
-                .createTicket(ticketType, seatOption)
-                .accounts({
-                    authority: wallet.publicKey,
-                    buyer: wallet.publicKey,
-                    concert: concertPublicKey,
-                    mint: mintKeypair.publicKey,
-                    tokenAccount: tokenAccountKeypair.publicKey,
-                    ticket: ticketKeypair.publicKey,
-                    tokenProgram: TOKEN_PROGRAM_ID,
-                    systemProgram: SystemProgram.programId,
-                })
-                .signers([ticketKeypair])
-                .rpc();
-
-            console.log("Ticket created: ", createTicketTx);
-            setSuccess(true);
-
-            // Update local state to reflect the ticket sale
+            // Update ketersediaan kursi di state
             if (selectedConcert) {
+                const updatedSections = selectedConcert.sections.map(s => {
+                    if (s.name === ticketType) {
+                        return {
+                            ...s,
+                            availableSeats: Math.max(0, s.availableSeats - 1)
+                        };
+                    }
+                    return s;
+                });
+
                 const updatedConcert = {
                     ...selectedConcert,
-                    available: selectedConcert.available - 1
+                    sections: updatedSections
                 };
+
                 setSelectedConcert(updatedConcert);
-
-                // Update the concerts list
-                setConcerts(concerts.map(c =>
-                    c.id === updatedConcert.id ? updatedConcert : c
-                ));
+                calculateAvailability(updatedConcert);
             }
 
-            // Simpan data ke localStorage sementara untuk pengujian
-            try {
-                // Simpan data sementara di localStorage untuk pengujian
-                const blockchainTickets = JSON.parse(localStorage.getItem(`blockchain_tickets_${concert}`) || '[]');
+            setSuccess(true);
 
-                if (!blockchainTickets.includes(seatNumber)) {
-                    blockchainTickets.push(seatNumber);
-                    localStorage.setItem(`blockchain_tickets_${concert}`, JSON.stringify(blockchainTickets));
-                    console.log(`Saved blockchain ticket ${seatNumber} for concert ${concert} to localStorage`);
-                }
+            // Muat ulang tiket pengguna
+            await loadMyTickets();
 
-                // Update mintedSeats state
-                setMintedSeats(prev => [...prev, seatNumber]);
-
-                // Trigger refresh SeatSelector
-                setRefreshTrigger(prev => prev + 1);
-
-                // Re-fetch minted seats
-                setTimeout(() => {
-                    fetchMintedSeats(concert);
-                }, 1000);
-            } catch (err) {
-                console.error("Error saving blockchain ticket data:", err);
+            // Update saldo setelah pembayaran
+            if (wallet && wallet.publicKey) {
+                const newBalance = await solanaConnection.getBalance(wallet.publicKey);
+                setSolanaBalance(newBalance / LAMPORTS_PER_SOL);
             }
 
-            // Show success for 3 seconds, then reset form
+            // Refresh daftar kursi yang sudah di-mint
+            setRefreshTrigger(prev => prev + 1);
+
+            // Navigasi ke halaman tiket saya setelah delay
             setTimeout(() => {
-                setConcert('');
-                setTicketType('Regular');
-                setSeatNumber('');
-                setSuccess(false);
-                setSeatSelectorOpen(false);
-                // Refresh available concerts
-                fetchConcerts();
-            }, 3000);
-
+                navigate('/my-tickets');
+            }, 2000);
         } catch (error) {
-            console.error("Error minting ticket:", error);
-            setError(error.message);
+            console.error("Error saat mint tiket:", error);
+            setError(error.message || "Terjadi kesalahan saat mint tiket. Silakan coba lagi.");
+            setPaymentComplete(false);
         } finally {
             setLoading(false);
         }
     };
 
-    // Fetch concerts function
-    const fetchConcerts = async () => {
-        try {
-            setLoadingConcerts(true);
-            setError('');
+    // Render informasi ketersediaan kursi
+    const renderAvailabilityInfo = (concert) => {
+        if (!concert || !concert.sections || concert.sections.length === 0) return null;
 
-            // Always include static concerts
-            let availableConcerts = [...staticConcerts];
-
-            // If wallet is connected, fetch blockchain concerts
-            if (wallet.connected) {
-                try {
-                    const program = getProgram(wallet);
-
-                    // Fetch actual concerts from blockchain
-                    const concertAccounts = await program.account.concert.all();
-
-                    if (concertAccounts.length > 0) {
-                        const fetchedConcerts = concertAccounts.map(concert => ({
-                            id: concert.publicKey.toString(),
-                            name: concert.account.name,
-                            venue: concert.account.venue,
-                            date: concert.account.date,
-                            available: concert.account.totalTickets - concert.account.ticketsSold,
-                            total: concert.account.totalTickets,
-                            creator: concert.account.authority.toString(),
-                            isBlockchain: true
-                        }));
-
-                        // Filter out concerts with no available tickets and add to our list
-                        const availableBlockchainConcerts = fetchedConcerts.filter(c => c.available > 0);
-                        availableConcerts = [...availableBlockchainConcerts, ...availableConcerts];
-                    }
-                } catch (err) {
-                    console.error("Error fetching blockchain concerts:", err);
-                    // Continue with static concerts only
-                }
-            }
-
-            // Filter out concerts with no available tickets
-            availableConcerts = availableConcerts.filter(c => c.available > 0);
-
-            setConcerts(availableConcerts);
-
-            // If we have a concertId parameter and it exists in our list, select it
-            if (concertId) {
-                const selected = availableConcerts.find(c => c.id === concertId);
-                if (selected) {
-                    setSelectedConcert(selected);
-                } else {
-                    setError("Konser yang dipilih tidak tersedia atau tidak ada.");
-                }
-            }
-        } catch (error) {
-            console.error("Error fetching concerts:", error);
-            setError("Gagal mengambil data konser");
-        } finally {
-            setLoadingConcerts(false);
-        }
+        return (
+            <div className="mt-2 bg-gray-800/30 rounded-lg p-3 border border-gray-700/50">
+                <h4 className="text-gray-300 text-sm font-medium mb-2">Ketersediaan Kursi:</h4>
+                <div className="space-y-2">
+                    {concert.sections.map((section) => (
+                        <div key={section.name} className="flex justify-between items-center">
+                            <span className="text-gray-400 text-xs">{section.name}:</span>
+                            <div className="flex items-center">
+                                <span className="text-gray-300 text-xs mr-2">
+                                    {section.availableSeats}/{section.totalSeats}
+                                </span>
+                                <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                                    <div
+                                        className="h-full bg-purple-500"
+                                        style={{ width: `${(section.availableSeats / section.totalSeats) * 100}%` }}
+                                    ></div>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                    <div className="flex justify-between items-center pt-1 border-t border-gray-700/50">
+                        <span className="text-gray-400 text-xs font-medium">Total:</span>
+                        <div className="flex items-center">
+                            <span className="text-gray-300 text-xs mr-2">
+                                {availabilityInfo.total?.available || 0}/{availabilityInfo.total?.total || 0}
+                            </span>
+                            <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                                <div
+                                    className="h-full bg-purple-500"
+                                    style={{ width: `${availabilityInfo.total?.percentage || 0}%` }}
+                                ></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
     };
 
-    // Ambil daftar konser untuk dropdown
-    useEffect(() => {
-        fetchConcerts();
+    // Render informasi pembayaran
+    const renderPaymentInfo = () => {
+        if (!selectedConcert || !ticketType) return null;
 
-        // Setup interval untuk auto-refresh daftar konser setiap menit
-        const intervalId = setInterval(() => {
-            console.log("Auto-refreshing concerts list...");
-            fetchConcerts();
-        }, 60000); // 60 detik
+        const section = selectedConcert.sections.find(s => s.name === ticketType);
+        const price = section ? section.price : 0;
 
-        // Cleanup interval saat unmount
-        return () => clearInterval(intervalId);
-    }, [wallet.connected]);
+        return (
+            <div className="mt-4 bg-gray-800/50 p-4 rounded-lg border border-gray-700">
+                <h3 className="text-white text-sm font-medium mb-3">Informasi Pembayaran</h3>
+                <div className="space-y-2">
+                    <div className="flex justify-between">
+                        <span className="text-gray-400 text-sm">Harga Tiket ({ticketType}):</span>
+                        <span className="text-white font-medium">{price} SOL</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-gray-400 text-sm">Biaya Transaksi:</span>
+                        <span className="text-white">~0.000005 SOL</span>
+                    </div>
+                    <div className="flex justify-between border-t border-gray-700 pt-2 mt-2">
+                        <span className="text-gray-300 text-sm font-medium">Total:</span>
+                        <span className="text-purple-400 font-medium">{(price + 0.000005).toFixed(6)} SOL</span>
+                    </div>
+                </div>
 
-    // Update selected concert when concert ID changes
-    useEffect(() => {
-        if (concert && concerts.length > 0) {
-            const selected = concerts.find(c => c.id === concert);
-            setSelectedConcert(selected || null);
+                <div className="mt-3 flex justify-between items-center">
+                    <span className="text-gray-400 text-sm">Saldo Wallet:</span>
+                    <span className={`${solanaBalance < price ? 'text-red-400' : 'text-green-400'} font-medium`}>
+                        {solanaBalance.toFixed(6)} SOL
+                    </span>
+                </div>
 
-            // Reset seat selection when concert changes
-            setSeatNumber('');
-            setSeatSelectorOpen(false);
-        } else {
-            setSelectedConcert(null);
-        }
-    }, [concert, concerts]);
+                {solanaBalance < price && (
+                    <div className="mt-2 bg-red-500/20 p-2 rounded text-red-400 text-xs">
+                        Saldo tidak mencukupi untuk membeli tiket ini. Silakan isi saldo Solana Anda.
+                    </div>
+                )}
+
+                {paymentComplete && (
+                    <div className="mt-2 bg-green-500/20 p-2 rounded text-green-400 text-xs">
+                        Pembayaran berhasil! Signature: {txSignature.substring(0, 8)}...{txSignature.substring(txSignature.length - 8)}
+                    </div>
+                )}
+            </div>
+        );
+    };
 
     return (
         <div className="min-h-screen bg-gray-900 pt-24 pb-16 px-4">
@@ -499,12 +648,27 @@ const MintTicket = () => {
                     transition={{ duration: 0.5 }}
                     className="bg-gradient-to-br from-purple-600 to-indigo-600 p-0.5 rounded-xl"
                 >
-                    <div className="bg-gray-900 rounded-xl p-8">
+                    <div className="bg-gray-900 rounded-xl p-8 relative">
+                        {/* Loading Overlay - menampilkan jika initialLoading aktif */}
+                        <AnimatePresence>
+                            {initialLoading && (
+                                <motion.div
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    className="absolute inset-0 bg-gray-900/80 flex flex-col items-center justify-center z-50 rounded-xl"
+                                >
+                                    <LoadingSpinner size={10} />
+                                    <p className="mt-4 text-white text-lg">Memuat konser...</p>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+
                         <h1 className="text-3xl md:text-4xl font-bold text-white mb-8 text-center">
                             Mint <GradientText text="Tiket Konser" />
                         </h1>
 
-                        {!wallet.connected && concerts.length === 0 ? (
+                        {!wallet.connected ? (
                             <div className="text-center py-12">
                                 <h3 className="text-xl text-white mb-6">Hubungkan wallet Anda untuk membuat tiket</h3>
                                 <WalletMultiButton className="!bg-gradient-to-br !from-purple-600 !to-indigo-600 hover:!shadow-lg hover:!shadow-purple-500/20 transition duration-300" />
@@ -516,41 +680,45 @@ const MintTicket = () => {
                                         Pilih Konser
                                     </label>
                                     <div className="relative">
-                                        {loadingConcerts ? (
+                                        {loading && !selectedConcert ? (
                                             <div className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-gray-400 flex items-center justify-center h-12">
                                                 <LoadingSpinner />
                                                 <span className="ml-2">Memuat daftar konser...</span>
                                             </div>
+                                        ) : concertId ? (
+                                            <div className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white">
+                                                {selectedConcert ? selectedConcert.name : "Memuat konser..."}
+                                            </div>
                                         ) : (
                                             <select
                                                 value={concert}
-                                                onChange={(e) => setConcert(e.target.value)}
-                                                required
+                                                onChange={(e) => {
+                                                    setConcert(e.target.value);
+                                                    setTicketType('');
+                                                    setSeatNumber('');
+                                                    setSeatSelectorOpen(false);
+
+                                                    // Cari konser yang dipilih
+                                                    const selected = approvedConcerts.find(c => c.id === e.target.value);
+                                                    if (selected) {
+                                                        setSelectedConcert(selected);
+                                                        calculateAvailability(selected);
+                                                    }
+                                                }}
                                                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-purple-500"
                                             >
                                                 <option value="">-- Pilih konser --</option>
-                                                {/* Group concerts by type */}
-                                                <optgroup label="Konser Blockchain">
-                                                    {concerts
-                                                        .filter(c => c.isBlockchain)
-                                                        .map(c => (
-                                                            <option key={c.id} value={c.id}>
-                                                                {c.name} - {c.venue} ({c.available}/{c.total} tiket)
-                                                            </option>
-                                                        ))}
-                                                </optgroup>
-                                                <optgroup label="Konser Admin">
-                                                    {concerts
-                                                        .filter(c => !c.isBlockchain)
-                                                        .map(c => (
-                                                            <option key={c.id} value={c.id}>
-                                                                {c.name} - {c.venue} ({c.available}/{c.total} tiket) [Admin]
-                                                            </option>
-                                                        ))}
-                                                </optgroup>
+                                                {approvedConcerts.map(c => (
+                                                    <option key={c.id} value={c.id}>
+                                                        {c.name} - {c.venue} ({c.sections.reduce((acc, s) => acc + s.availableSeats, 0)}/{c.sections.reduce((acc, s) => acc + s.totalSeats, 0)} kursi)
+                                                    </option>
+                                                ))}
                                             </select>
                                         )}
                                     </div>
+
+                                    {/* Tampilkan informasi ketersediaan kursi */}
+                                    {selectedConcert && renderAvailabilityInfo(selectedConcert)}
                                 </div>
 
                                 {/* Show selected concert details */}
@@ -558,67 +726,95 @@ const MintTicket = () => {
                                     <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
                                         <div className="flex justify-between items-center mb-3">
                                             <h3 className="text-white font-semibold">{selectedConcert.name}</h3>
-                                            {selectedConcert.id.startsWith('static-') && (
-                                                <span className="bg-purple-600 text-white text-xs py-1 px-2 rounded-full">
-                                                    Dibuat Admin
-                                                </span>
-                                            )}
-                                            {selectedConcert.isBlockchain && (
-                                                <span className="bg-blue-600 text-white text-xs py-1 px-2 rounded-full">
-                                                    Blockchain
-                                                </span>
-                                            )}
+                                            <span className="bg-purple-600 text-white text-xs py-1 px-2 rounded-full">
+                                                {selectedConcert.status || 'Approved'}
+                                            </span>
                                         </div>
                                         <div className="grid grid-cols-2 gap-4 text-sm">
                                             <div>
-                                                <span className="text-gray-400 block mb-1">Venue:</span>
+                                                <span className="text-gray-400 block mb-1">Lokasi:</span>
                                                 <p className="text-white">{selectedConcert.venue}</p>
                                             </div>
                                             <div>
                                                 <span className="text-gray-400 block mb-1">Tanggal:</span>
-                                                <p className="text-white">{selectedConcert.date}</p>
+                                                <p className="text-white">
+                                                    {new Date(selectedConcert.date).toLocaleDateString('id-ID', {
+                                                        day: 'numeric',
+                                                        month: 'long',
+                                                        year: 'numeric'
+                                                    })}
+                                                </p>
                                             </div>
                                         </div>
-                                        <div className="mt-3">
-                                            <span className="text-gray-400 block mb-1">Tiket Tersedia:</span>
-                                            <div className="flex items-center">
-                                                <span className="text-white mr-2">{selectedConcert.available} dari {selectedConcert.total}</span>
-                                                <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
-                                                    <div
-                                                        className="h-full bg-purple-500"
-                                                        style={{ width: `${(selectedConcert.available / selectedConcert.total) * 100}%` }}
-                                                    ></div>
-                                                </div>
+                                        {selectedConcert.posterUrl && (
+                                            <div className="mt-3">
+                                                <img
+                                                    src={selectedConcert.posterUrl}
+                                                    alt={selectedConcert.name}
+                                                    className="max-h-32 mx-auto rounded"
+                                                />
                                             </div>
-                                        </div>
+                                        )}
                                     </div>
                                 )}
+
+                                {/* Render payment info if concert and ticket type selected */}
+                                {selectedConcert && ticketType && renderPaymentInfo()}
 
                                 <div>
                                     <label className="block text-gray-300 text-sm font-medium mb-2">
                                         Tipe Tiket
                                     </label>
-                                    <div className="grid grid-cols-3 gap-4">
-                                        {['Regular', 'VIP', 'Backstage'].map((type) => (
-                                            <button
-                                                key={type}
-                                                type="button"
-                                                onClick={() => {
-                                                    setTicketType(type);
-                                                    setSeatNumber(''); // Reset seat selection when ticket type changes
-                                                }}
-                                                className={`py-3 px-4 rounded-lg border transition duration-300 ${ticketType === type
-                                                    ? 'bg-purple-600 border-purple-500 text-white'
-                                                    : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-purple-500'
-                                                    }`}
-                                            >
-                                                {type}
-                                            </button>
-                                        ))}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                        {selectedConcert && selectedConcert.sections && selectedConcert.sections.length > 0 ? (
+                                            selectedConcert.sections.map((section) => (
+                                                <button
+                                                    key={section.name}
+                                                    type="button"
+                                                    disabled={section.availableSeats <= 0}
+                                                    onClick={() => {
+                                                        console.log("Tipe tiket dipilih:", section.name);
+                                                        setTicketType(section.name);
+                                                        setSeatNumber(''); // Reset pilihan kursi saat tipe tiket berubah
+                                                        setSeatSelectorOpen(true); // Buka selector kursi langsung
+                                                    }}
+                                                    className={`py-3 px-4 rounded-lg border transition duration-300 
+                                                        ${section.availableSeats <= 0 ? 'bg-gray-800/50 border-gray-700 text-gray-500 cursor-not-allowed' :
+                                                            ticketType === section.name ?
+                                                                'bg-purple-600 border-purple-500 text-white' :
+                                                                'bg-gray-800 border-gray-700 text-gray-300 hover:border-purple-500'
+                                                        }`}
+                                                >
+                                                    <div className="text-sm">{section.name}</div>
+                                                    <div className="text-xs mt-1">{section.price} SOL</div>
+                                                    <div className="text-xs mt-1">{section.availableSeats}/{section.totalSeats} kursi</div>
+                                                </button>
+                                            ))
+                                        ) : (
+                                            // Default options jika tidak ada section
+                                            ['Regular', 'VIP', 'Backstage'].map((type) => (
+                                                <button
+                                                    key={type}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        console.log("Tipe tiket default dipilih:", type);
+                                                        setTicketType(type);
+                                                        setSeatNumber(''); // Reset pilihan kursi saat tipe tiket berubah
+                                                        setSeatSelectorOpen(true); // Buka selector kursi langsung
+                                                    }}
+                                                    className={`py-3 px-4 rounded-lg border transition duration-300 ${ticketType === type
+                                                        ? 'bg-purple-600 border-purple-500 text-white'
+                                                        : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-purple-500'
+                                                        }`}
+                                                >
+                                                    {type}
+                                                </button>
+                                            ))
+                                        )}
                                     </div>
                                 </div>
 
-                                {/* Seat Selection Button */}
+                                {/* Seat Selection Section */}
                                 <div>
                                     <div className="flex justify-between items-center mb-2">
                                         <label className="block text-gray-300 text-sm font-medium">
@@ -631,10 +827,14 @@ const MintTicket = () => {
                                         )}
                                     </div>
 
-                                    {!seatSelectorOpen ? (
+                                    {/* Jika konser dan tipe tiket dipilih tetapi pemilihan kursi belum dibuka */}
+                                    {!seatSelectorOpen && selectedConcert && ticketType ? (
                                         <button
                                             type="button"
-                                            onClick={() => setSeatSelectorOpen(true)}
+                                            onClick={() => {
+                                                console.log("Membuka pemilihan kursi");
+                                                setSeatSelectorOpen(true);
+                                            }}
                                             className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white hover:border-purple-500 focus:outline-none focus:border-purple-500 flex items-center justify-between"
                                         >
                                             <span>
@@ -644,7 +844,13 @@ const MintTicket = () => {
                                                 <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
                                             </svg>
                                         </button>
+                                    ) : !selectedConcert || !ticketType ? (
+                                        // Tampilkan pesan jika konser atau tipe tiket belum dipilih
+                                        <div className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-gray-500">
+                                            Silakan pilih konser dan tipe tiket terlebih dahulu
+                                        </div>
                                     ) : (
+                                        // Tampilkan pemilihan kursi jika sudah terbuka
                                         <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
                                             <div className="flex justify-between items-center mb-3">
                                                 <h3 className="text-white text-sm font-medium">Pemilihan Kursi</h3>
@@ -659,8 +865,7 @@ const MintTicket = () => {
                                                 </button>
                                             </div>
 
-
-                                            {/* Integrated SeatSelector component with updated props */}
+                                            {/* SeatSelector component */}
                                             <SeatSelector
                                                 ticketType={ticketType}
                                                 concertId={concert}
@@ -668,6 +873,7 @@ const MintTicket = () => {
                                                 onSeatSelected={handleSeatSelected}
                                                 mintedSeats={mintedSeats}
                                                 refreshTrigger={refreshTrigger}
+                                                ticketPrice={selectedConcert.sections.find(s => s.name === ticketType)?.price || 0.01}
                                             />
                                         </div>
                                     )}
@@ -682,17 +888,18 @@ const MintTicket = () => {
                                 {success && (
                                     <div className="bg-green-500/10 border border-green-500 rounded-lg p-4">
                                         <p className="text-green-500 text-sm">
-                                            {selectedConcert && selectedConcert.id.startsWith('static-')
-                                                ? `Tiket admin berhasil dibuat! [${ticketType} - Kursi ${seatNumber}]`
-                                                : `Tiket berhasil dibuat! [${ticketType} - Kursi ${seatNumber}]`}
+                                            Tiket berhasil dibuat! [Tipe: {ticketType} - Kursi: {seatNumber}]
+                                        </p>
+                                        <p className="text-green-500 text-xs mt-1">
+                                            Mengalihkan ke halaman Tiket Saya...
                                         </p>
                                     </div>
                                 )}
 
                                 <button
                                     type="submit"
-                                    disabled={loading || loadingConcerts || !concert || !seatNumber}
-                                    className={`w-full bg-gradient-to-br from-purple-600 to-indigo-600 p-0.5 rounded-lg group ${(loading || loadingConcerts || !concert || !seatNumber) ? 'opacity-70 cursor-not-allowed' : 'hover:shadow-lg hover:shadow-purple-500/20'
+                                    disabled={loading || !concert || !ticketType || !seatNumber || !isAuthenticated || solanaBalance < (selectedConcert?.sections.find(s => s.name === ticketType)?.price || 0)}
+                                    className={`w-full bg-gradient-to-br from-purple-600 to-indigo-600 p-0.5 rounded-lg group ${(loading || !concert || !ticketType || !seatNumber || !isAuthenticated || solanaBalance < (selectedConcert?.sections.find(s => s.name === ticketType)?.price || 0)) ? 'opacity-70 cursor-not-allowed' : 'hover:shadow-lg hover:shadow-purple-500/20'
                                         }`}
                                 >
                                     <div className="bg-gray-900 rounded-md py-3 px-6 text-white font-medium group-hover:bg-gray-900/80 transition duration-300">
@@ -702,31 +909,19 @@ const MintTicket = () => {
                                                 <span className="ml-2">Membuat Tiket...</span>
                                             </span>
                                         ) : (
-                                            'Mint Tiket'
+                                            'Mint Tiket dengan Solana'
                                         )}
                                     </div>
                                 </button>
 
-                                {!seatNumber && concert && (
-                                    <div className="mt-2 text-center">
-                                        <p className="text-amber-400 text-sm">
-                                            Anda harus memilih kursi terlebih dahulu
-                                        </p>
-                                    </div>
-                                )}
-
-                                {/* Wallet connection reminder */}
-                                {selectedConcert && !selectedConcert.id.startsWith('static-') && !wallet.connected && (
-                                    <div className="bg-blue-500/10 border border-blue-500 rounded-lg p-4 mt-4">
-                                        <p className="text-blue-400 text-sm flex items-center">
+                                {!isAuthenticated && (
+                                    <div className="bg-yellow-500/10 border border-yellow-500 rounded-lg p-4 mt-4">
+                                        <p className="text-yellow-500 text-sm flex items-center">
                                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
                                                 <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2h-1V9a1 1 0 00-1-1z" clipRule="evenodd" />
                                             </svg>
-                                            Silakan hubungkan wallet Anda untuk membuat tiket blockchain.
+                                            Anda perlu melakukan autentikasi untuk mint tiket.
                                         </p>
-                                        <div className="mt-2 flex justify-center">
-                                            <WalletMultiButton className="!bg-gradient-to-br !from-blue-600 !to-indigo-600 hover:!shadow-lg hover:!shadow-blue-500/20 transition duration-300 !text-sm !py-2" />
-                                        </div>
                                     </div>
                                 )}
                             </form>
@@ -740,55 +935,6 @@ const MintTicket = () => {
                         </div>
                     </div>
                 </motion.div>
-
-                {/* Information Cards */}
-                <div className="mt-12 grid md:grid-cols-3 gap-6">
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.2 }}
-                        className="bg-gray-800/50 rounded-lg p-6"
-                    >
-                        <div className="w-10 h-10 bg-purple-900/50 rounded-full flex items-center justify-center mb-4">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-purple-400" viewBox="0 0 20 20" fill="currentColor">
-                                <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                            </svg>
-                        </div>
-                        <h3 className="text-white font-semibold mb-2">Minting Aman</h3>
-                        <p className="text-gray-400 text-sm">Tiket Anda dibuat sebagai NFT di blockchain Solana menjamin keasliannya.</p>
-                    </motion.div>
-
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.3 }}
-                        className="bg-gray-800/50 rounded-lg p-6"
-                    >
-                        <div className="w-10 h-10 bg-purple-900/50 rounded-full flex items-center justify-center mb-4">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-purple-400" viewBox="0 0 20 20" fill="currentColor">
-                                <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
-                            </svg>
-                        </div>
-                        <h3 className="text-white font-semibold mb-2">Transfer Instan</h3>
-                        <p className="text-gray-400 text-sm">Transfer atau jual tiket Anda secara instan dengan biaya minimal.</p>
-                    </motion.div>
-
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.4 }}
-                        className="bg-gray-800/50 rounded-lg p-6"
-                    >
-                        <div className="w-10 h-10 bg-purple-900/50 rounded-full flex items-center justify-center mb-4">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-purple-400" viewBox="0 0 20 20" fill="currentColor">
-                                <path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z" />
-                                <path fillRule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clipRule="evenodd" />
-                            </svg>
-                        </div>
-                        <h3 className="text-white font-semibold mb-2">Beragam Tipe</h3>
-                        <p className="text-gray-400 text-sm">Pilih dari tingkat akses Regular, VIP, dan Backstage.</p>
-                    </motion.div>
-                </div>
             </div>
         </div>
     );

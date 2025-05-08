@@ -1,15 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { PublicKey, SystemProgram } from '@solana/web3.js';
-import { getProgram, isAdmin } from '../utils/anchor';
-import { getAdminLoginStatus, logoutAdmin, verifyAdminLogin } from '../utils/adminAuth';
-import AdminLoginModal from './admin/AdminLoginModal';
-import EditConcertModal from './EditConcertModal';
-import idl from '../idl.json';
+import { motion } from 'framer-motion';
+import LoadingSpinner from './common/LoadingSpinner';
+import AuthService from '../services/AuthService';
 
-// Gradient text component untuk konsistensi
+// Gradient text component
 const GradientText = ({ text, className = "" }) => {
     return (
         <span className={`text-transparent bg-clip-text bg-gradient-to-r from-purple-500 via-pink-500 to-blue-500 ${className}`}>
@@ -18,30 +14,48 @@ const GradientText = ({ text, className = "" }) => {
     );
 };
 
-// Fungsi untuk memeriksa apakah user adalah admin global
-const isGlobalAdmin = (wallet) => {
-    const ADMIN_PUBLIC_KEY = "2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU";
-    return wallet.publicKey && wallet.publicKey.toString() === ADMIN_PUBLIC_KEY;
+// Modal Konfirmasi Hapus
+const DeleteConfirmationModal = ({ isOpen, onClose, onConfirm, concertName }) => {
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4">
+            <motion.div
+                className="bg-gray-800 rounded-lg p-6 w-full max-w-md border border-red-500"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+            >
+                <h3 className="text-xl font-bold text-white mb-4">Konfirmasi Hapus</h3>
+                <p className="text-gray-300 mb-6">
+                    Apakah Anda yakin ingin menghapus konser <span className="text-red-400 font-semibold">"{concertName}"</span>?
+                    Tindakan ini tidak dapat dibatalkan.
+                </p>
+
+                <div className="flex justify-end space-x-3">
+                    <button
+                        onClick={onClose}
+                        className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+                    >
+                        Batal
+                    </button>
+                    <button
+                        onClick={onConfirm}
+                        className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+                    >
+                        Hapus
+                    </button>
+                </div>
+            </motion.div>
+        </div>
+    );
 };
 
-// Fungsi untuk memeriksa kepemilikan dengan format yang konsisten
-const isOwner = (creator, walletPublicKey) => {
-    if (!creator || !walletPublicKey) return false;
+// Concert Card Component
+const ConcertCard = ({ concert, index, isAdmin, onDeleteConcert }) => {
+    // Wallet admin yang diizinkan
+    const ADMIN_WALLET = '2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU';
 
-    const creatorStr = typeof creator === 'object' ? creator.toString() : creator;
-    const walletStr = typeof walletPublicKey === 'object' ? walletPublicKey.toString() : walletPublicKey;
-
-    console.log("Comparing pubkeys:", {
-        creator: creatorStr,
-        wallet: walletStr,
-        areEqual: creatorStr === walletStr
-    });
-
-    return creatorStr === walletStr;
-};
-
-// Card component
-const ConcertCard = ({ concert, index, isAdminUser, onDeleteConcert, onEditConcert, wallet }) => {
     // Array of gradient backgrounds for tickets
     const previewImages = [
         "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='a' gradientUnits='userSpaceOnUse' x1='0' x2='0' y1='0' y2='100%25' gradientTransform='rotate(240)'%3E%3Cstop offset='0' stop-color='%234338ca'/%3E%3Cstop offset='1' stop-color='%23a855f7'/%3E%3C/linearGradient%3E%3Cpattern patternUnits='userSpaceOnUse' id='b' width='300' height='250' x='0' y='0' viewBox='0 0 1080 900'%3E%3Cg fill-opacity='0.05'%3E%3Cpolygon fill='%23444' points='90 150 0 300 180 300'/%3E%3Cpolygon points='90 150 180 0 0 0'/%3E%3Cpolygon fill='%23AAA' points='270 150 360 0 180 0'/%3E%3Cpolygon fill='%23DDD' points='450 150 360 300 540 300'/%3E%3Cpolygon fill='%23999' points='450 150 540 0 360 0'/%3E%3Cpolygon points='630 150 540 300 720 300'/%3E%3Cpolygon fill='%23DDD' points='630 150 720 0 540 0'/%3E%3Cpolygon fill='%23444' points='810 150 720 300 900 300'/%3E%3Cpolygon fill='%23FFF' points='810 150 900 0 720 0'/%3E%3Cpolygon fill='%23DDD' points='990 150 900 300 1080 300'/%3E%3Cpolygon fill='%23444' points='990 150 1080 0 900 0'/%3E%3Cpolygon fill='%23DDD' points='90 450 0 600 180 600'/%3E%3Cpolygon points='90 450 180 300 0 300'/%3E%3Cpolygon fill='%23666' points='270 450 180 600 360 600'/%3E%3Cpolygon fill='%23AAA' points='270 450 360 300 180 300'/%3E%3Cpolygon fill='%23DDD' points='450 450 360 600 540 600'/%3E%3Cpolygon fill='%23999' points='450 450 540 300 360 300'/%3E%3Cpolygon fill='%23999' points='630 450 540 600 720 600'/%3E%3Cpolygon fill='%23FFF' points='630 450 720 300 540 300'/%3E%3Cpolygon points='810 450 720 600 900 600'/%3E%3Cpolygon fill='%23DDD' points='810 450 900 300 720 300'/%3E%3Cpolygon fill='%23AAA' points='990 450 900 600 1080 600'/%3E%3Cpolygon fill='%23444' points='990 450 1080 300 900 300'/%3E%3Cpolygon fill='%23222' points='90 750 0 900 180 900'/%3E%3Cpolygon points='270 750 180 900 360 900'/%3E%3Cpolygon fill='%23DDD' points='270 750 360 600 180 600'/%3E%3Cpolygon points='450 750 540 600 360 600'/%3E%3Cpolygon points='630 750 540 900 720 900'/%3E%3Cpolygon fill='%23444' points='630 750 720 600 540 600'/%3E%3Cpolygon fill='%23AAA' points='810 750 720 900 900 900'/%3E%3Cpolygon fill='%23666' points='810 750 900 600 720 600'/%3E%3Cpolygon fill='%23999' points='990 750 900 900 1080 900'/%3E%3Cpolygon fill='%23999' points='180 0 90 150 270 150'/%3E%3Cpolygon fill='%23444' points='360 0 270 150 450 150'/%3E%3Cpolygon fill='%23FFF' points='540 0 450 150 630 150'/%3E%3Cpolygon points='900 0 810 150 990 150'/%3E%3Cpolygon fill='%23222' points='0 300 -90 450 90 450'/%3E%3Cpolygon fill='%23FFF' points='0 300 90 150 -90 150'/%3E%3Cpolygon fill='%23FFF' points='180 300 90 450 270 450'/%3E%3Cpolygon fill='%23666' points='180 300 270 150 90 150'/%3E%3Cpolygon fill='%23222' points='360 300 270 450 450 450'/%3E%3Cpolygon fill='%23FFF' points='360 300 450 150 270 150'/%3E%3Cpolygon fill='%23444' points='540 300 450 450 630 450'/%3E%3Cpolygon fill='%23222' points='540 300 630 150 450 150'/%3E%3Cpolygon fill='%23AAA' points='720 300 630 450 810 450'/%3E%3Cpolygon fill='%23666' points='720 300 810 150 630 150'/%3E%3Cpolygon fill='%23FFF' points='900 300 810 450 990 450'/%3E%3Cpolygon fill='%23999' points='900 300 990 150 810 150'/%3E%3Cpolygon points='0 600 -90 750 90 750'/%3E%3Cpolygon fill='%23666' points='0 600 90 450 -90 450'/%3E%3Cpolygon fill='%23AAA' points='180 600 90 750 270 750'/%3E%3Cpolygon fill='%23444' points='180 600 270 450 90 450'/%3E%3Cpolygon fill='%23444' points='360 600 270 750 450 750'/%3E%3Cpolygon fill='%23999' points='360 600 450 450 270 450'/%3E%3Cpolygon fill='%23666' points='540 600 630 450 450 450'/%3E%3Cpolygon fill='%23222' points='720 600 630 750 810 750'/%3E%3Cpolygon fill='%23FFF' points='900 600 810 750 990 750'/%3E%3Cpolygon fill='%23222' points='900 600 990 450 810 450'/%3E%3Cpolygon fill='%23DDD' points='0 900 90 750 -90 750'/%3E%3Cpolygon fill='%23444' points='180 900 270 750 90 750'/%3E%3Cpolygon fill='%23FFF' points='360 900 450 750 270 750'/%3E%3Cpolygon fill='%23AAA' points='540 900 630 750 450 750'/%3E%3Cpolygon fill='%23FFF' points='720 900 810 750 630 750'/%3E%3Cpolygon fill='%23222' points='900 900 990 750 810 750'/%3E%3Cpolygon fill='%23222' points='1080 300 990 450 1170 450'/%3E%3Cpolygon fill='%23FFF' points='1080 300 1170 150 990 150'/%3E%3Cpolygon points='1080 600 990 750 1170 750'/%3E%3Cpolygon fill='%23666' points='1080 600 1170 450 990 450'/%3E%3Cpolygon fill='%23DDD' points='1080 900 1170 750 990 750'/%3E%3C/g%3E%3C/pattern%3E%3C/defs%3E%3Crect x='0' y='0' fill='url(%23a)' width='100%25' height='100%25'/%3E%3Crect x='0' y='0' fill='url(%23b)' width='100%25' height='100%25'/%3E%3C/svg%3E",
@@ -53,44 +67,31 @@ const ConcertCard = ({ concert, index, isAdminUser, onDeleteConcert, onEditConce
     const imgIndex = parseInt(index) % previewImages.length;
     const previewImage = previewImages[imgIndex];
 
-    // Fungsi untuk memformat ID
-    const formatId = (id) => {
-        if (id.startsWith('static-')) {
-            return id.replace('static-', '');
+    // Hitung ketersediaan tiket
+    const availableSeats = concert.sections ? concert.sections.reduce((acc, section) => acc + section.availableSeats, 0) : 0;
+    const totalSeats = concert.sections ? concert.sections.reduce((acc, section) => acc + section.totalSeats, 0) : concert.totalTickets || 0;
+    const availabilityPercentage = (availableSeats / totalSeats) * 100;
+
+    // Format tanggal untuk tampilan
+    const formatDate = (dateString) => {
+        try {
+            const date = new Date(dateString);
+            return new Intl.DateTimeFormat('id-ID', {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric'
+            }).format(date);
+        } catch (err) {
+            return dateString || 'Tanggal tidak diketahui';
         }
-        // Untuk public key, tampilkan hanya 4 karakter awal dan akhir
-        if (id.length > 10) {
-            return `${id.slice(0, 4)}...${id.slice(-4)}`;
-        }
-        return id;
     };
-
-    // Periksa apakah pengguna saat ini adalah pemilik konser
-    const isOwnedByCurrentUser = isOwner(concert.creator, wallet.publicKey);
-
-    // Periksa apakah pengguna adalah admin global
-    const isGlobalAdminUser = isGlobalAdmin(wallet);
-
-    // Debugging ownership
-    useEffect(() => {
-        console.log("Concert ownership check:", {
-            concertId: concert.id,
-            concertName: concert.name,
-            creator: concert.creator,
-            currentWallet: wallet?.publicKey?.toString(),
-            isOwnedByCurrentUser: isOwnedByCurrentUser
-        });
-    }, [concert, wallet?.publicKey, isOwnedByCurrentUser]);
-
-    // Menentukan apakah pengguna dapat menghapus konser
-    const canDelete = isOwnedByCurrentUser || isGlobalAdminUser;
 
     return (
         <motion.div
             className="shadow-xl rounded-lg overflow-hidden hover:shadow-2xl hover:shadow-purple-500/20 transition-all hover:-translate-y-2 duration-300"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: index * 0.05 }}
+            transition={{ duration: 0.5, delay: index * 0.1 }}
         >
             {/* Warna border ungu seperti di NFT Ticket */}
             <div className="w-full h-full bg-gradient-to-br from-purple-600 to-indigo-600 p-0.5 rounded-lg">
@@ -105,13 +106,20 @@ const ConcertCard = ({ concert, index, isAdminUser, onDeleteConcert, onEditConce
                             opacity: 0.9
                         }}
                     >
+                        {/* Admin badge - pastikan publicKey tidak undefined */}
+                        {isAdmin && (
+                            <div className="absolute top-2 left-2 bg-yellow-500 text-gray-900 text-xs font-bold px-2 py-1 rounded-md">
+                                Admin
+                            </div>
+                        )}
+
                         {/* Judul konser di tengah */}
                         <div className="absolute inset-0 flex items-center justify-center">
                             <h3 className="text-white text-xl font-bold px-4 text-center">{concert.name}</h3>
                         </div>
 
                         {/* Badge limited tickets */}
-                        {concert.available < (concert.total * 0.3) && (
+                        {availabilityPercentage < 30 && (
                             <div className="absolute top-2 right-2 bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-md">
                                 Limited Tickets
                             </div>
@@ -127,40 +135,44 @@ const ConcertCard = ({ concert, index, isAdminUser, onDeleteConcert, onEditConce
 
                         <div className="flex justify-between items-center mb-1.5">
                             <span className="text-gray-400 text-sm">Date</span>
-                            <span className="text-white text-sm font-medium">{concert.date}</span>
+                            <span className="text-white text-sm font-medium">{formatDate(concert.date)}</span>
                         </div>
 
                         <div className="flex justify-between items-center mb-2">
                             <span className="text-gray-400 text-sm">Available</span>
                             <div className="flex items-center">
-                                <span className="text-white text-sm font-medium mr-2">{concert.available} / {concert.total}</span>
+                                <span className="text-white text-sm font-medium mr-2">{availableSeats} / {totalSeats}</span>
                                 {/* Progress bar untuk ketersediaan tiket */}
                                 <div className="w-14 h-1.5 bg-gray-700 rounded-full overflow-hidden">
                                     <div
                                         className="h-full bg-pink-500"
-                                        style={{ width: `${(concert.available / concert.total) * 100}%` }}
+                                        style={{ width: `${availabilityPercentage}%` }}
                                     ></div>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    {/* Footer dengan logo dan ID */}
+                    {/* Footer dengan logo */}
                     <div className="flex justify-between items-center mb-3">
                         <div className="bg-purple-900/50 border border-purple-700/50 rounded-full w-7 h-7 flex items-center justify-center">
                             <span className="text-purple-300/80 text-xs">M</span>
                         </div>
-                        <div className="text-right">
-                            <div className="text-gray-300/80 text-xs font-bold">
-                                #{formatId(concert.id)}
-                            </div>
-                        </div>
-                    </div>
 
+                        {/* Admin actions - hanya untuk admin dengan wallet yang ditentukan */}
+                        {isAdmin && (
+                            <button
+                                onClick={() => onDeleteConcert(concert)}
+                                className="bg-red-900/50 text-red-300 hover:bg-red-800 text-xs px-2 py-1 rounded-md transition-colors"
+                            >
+                                Hapus
+                            </button>
+                        )}
+                    </div>
                     {/* Action buttons */}
                     <div className="space-y-2">
                         <Link
-                            to={`/concert/${concert.id}`}
+                            to={`/concert/${concert._id}`}
                             className="block w-full bg-gradient-to-br from-indigo-600 to-purple-600 p-0.5 rounded-lg hover:shadow-lg hover:shadow-purple-500/20 transition duration-300"
                         >
                             <div className="bg-gray-900 text-white text-center py-2 rounded-md text-sm font-medium hover:bg-gray-800/90 transition duration-300">
@@ -169,70 +181,13 @@ const ConcertCard = ({ concert, index, isAdminUser, onDeleteConcert, onEditConce
                         </Link>
 
                         <Link
-                            to={`/mint-ticket/${concert.id}`}
+                            to={`/mint-ticket/${concert._id}`}
                             className="block w-full bg-gradient-to-br from-pink-500 to-purple-600 p-0.5 rounded-lg hover:shadow-lg hover:shadow-pink-500/20 transition duration-300"
                         >
                             <div className="bg-gray-900 text-white text-center py-2 rounded-md text-sm font-medium hover:bg-gray-800/90 transition duration-300">
                                 Mint Ticket
                             </div>
                         </Link>
-
-                        {/* Admin-only buttons */}
-                        {isAdminUser && (
-                            <>
-                                {/* Edit button for both static and blockchain concerts */}
-                                <button
-                                    onClick={() => onEditConcert(concert)}
-                                    className="block w-full bg-gradient-to-br from-blue-500 to-blue-600 p-0.5 rounded-lg hover:shadow-lg hover:shadow-blue-500/20 transition duration-300"
-                                >
-                                    <div className="bg-gray-900 text-white text-center py-2 rounded-md text-sm font-medium hover:bg-gray-800/90 transition duration-300">
-                                        Edit Concert
-                                    </div>
-                                </button>
-
-                                {/* Delete button - hanya tampilkan jika user bisa menghapus */}
-                                {canDelete && (
-                                    <button
-                                        onClick={() => onDeleteConcert(concert.id)}
-                                        className="block w-full bg-gradient-to-br from-red-500 to-red-600 p-0.5 rounded-lg hover:shadow-lg hover:shadow-red-500/20 transition duration-300"
-                                    >
-                                        <div className="bg-gray-900 text-white text-center py-2 rounded-md text-sm font-medium hover:bg-gray-800/90 transition duration-300">
-                                            Delete Concert
-                                            {isGlobalAdminUser && !isOwnedByCurrentUser && (
-                                                <span className="text-xs block">(Admin Override)</span>
-                                            )}
-                                            {isOwnedByCurrentUser && (
-                                                <span className="text-xs block">(Owner)</span>
-                                            )}
-                                        </div>
-                                    </button>
-                                )}
-
-                                {/* Pesan jika tidak bisa menghapus */}
-                                {!canDelete && (
-                                    <div className="text-gray-400 text-xs text-center mt-2">
-                                        Only the owner or admin can delete this concert
-                                    </div>
-                                )}
-
-                                {/* Debug button */}
-                                <button
-                                    onClick={() => {
-                                        alert(`Debugging Concert Ownership:
-Concert ID: ${concert.id}
-Concert Name: ${concert.name}
-Creator: ${concert.creator}
-Your Wallet: ${wallet.publicKey?.toString()}
-Is Owner: ${isOwnedByCurrentUser ? 'Yes' : 'No'}
-Is Global Admin: ${isGlobalAdminUser ? 'Yes' : 'No'}
-Can Delete: ${canDelete ? 'Yes' : 'No'}`);
-                                    }}
-                                    className="text-xs text-gray-400 underline mt-2 w-full text-center"
-                                >
-                                    Debug Ownership
-                                </button>
-                            </>
-                        )}
                     </div>
                 </div>
             </div>
@@ -241,442 +196,442 @@ Can Delete: ${canDelete ? 'Yes' : 'No'}`);
 };
 
 const ConcertList = () => {
-    const [loading, setLoading] = useState(true);
+    const { publicKey } = useWallet();
     const [concerts, setConcerts] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [searchTerm, setSearchTerm] = useState('');
+    const [currentPage, setCurrentPage] = useState(1);
+    const [totalPages, setTotalPages] = useState(1);
     const [filter, setFilter] = useState('all');
-    const wallet = useWallet();
-    const [isAdminUser, setIsAdminUser] = useState(false);
-    const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
-    const [showLoginModal, setShowLoginModal] = useState(false);
-    const [showEditModal, setShowEditModal] = useState(false);
-    const [concertToEdit, setConcertToEdit] = useState(null);
+    const [isAdmin, setIsAdmin] = useState(false);
+    const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [concertToDelete, setConcertToDelete] = useState(null);
+    const [successMessage, setSuccessMessage] = useState('');
+    const [deletingConcert, setDeletingConcert] = useState(false);
 
-    // Static concerts data (fallback)
-    const staticConcerts = [
-        { id: 'static-1', name: 'EDM Festival 2025', venue: 'Metaverse Arena', date: 'Jun 15, 2025', available: 120, total: 500, category: 'festival' },
-        { id: 'static-2', name: 'Rock Legends', venue: 'Crypto Stadium', date: 'Jul 22, 2025', available: 75, total: 300, category: 'rock' },
-        { id: 'static-3', name: 'Jazz Night', venue: 'NFT Concert Hall', date: 'Aug 05, 2025', available: 50, total: 100, category: 'jazz' },
-        { id: 'static-4', name: 'Classical Symphony', venue: 'Blockchain Theater', date: 'Sep 18, 2025', available: 25, total: 400, category: 'classical' },
-        { id: 'static-5', name: 'Hip Hop Summit', venue: 'Web3 Arena', date: 'Oct 10, 2025', available: 200, total: 800, category: 'hiphop' },
-        { id: 'static-6', name: 'Electronic Music Night', venue: 'Digital Dome', date: 'Nov 20, 2025', available: 150, total: 500, category: 'electronic' },
-        { id: 'static-7', name: 'Pop Sensation', venue: 'Virtual Stadium', date: 'Dec 12, 2025', available: 300, total: 1000, category: 'pop' },
-        { id: 'static-8', name: 'Country Music Festival', venue: 'Decentralized Park', date: 'Jan 25, 2026', available: 100, total: 350, category: 'country' },
-    ];
+    // Admin wallet address yang diizinkan
+    const ADMIN_WALLET = '2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU';
 
-    // Check if user is admin
+    // Cek status admin saat komponen dimuat
     useEffect(() => {
-        if (wallet.connected) {
-            const admin = isAdmin(wallet);
-            setIsAdminUser(admin);
+        const checkAdminStatus = async () => {
+            try {
+                if (publicKey) {
+                    const walletAddress = publicKey.toString();
+                    console.log("Connected wallet:", walletAddress);
 
-            // If user is admin, check if they're already logged in
-            if (admin) {
-                setIsAdminLoggedIn(getAdminLoginStatus());
-            } else {
-                setIsAdminLoggedIn(false);
-            }
-        } else {
-            setIsAdminUser(false);
-            setIsAdminLoggedIn(false);
-        }
-    }, [wallet.connected, wallet.publicKey]);
+                    // Check if wallet is admin
+                    const isAdmin = walletAddress === '2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU';
+                    setIsAdmin(isAdmin);
 
-    // Function to handle admin login
-    const handleAdminLogin = () => {
-        setShowLoginModal(true);
-    };
-
-    // Debug function to check available smart contract methods
-    const debugSmartContract = async () => {
-        if (!wallet.connected) {
-            alert("Please connect your wallet first");
-            return;
-        }
-
-        try {
-            const program = getProgram(wallet);
-            console.log("Available program methods:", Object.keys(program.methods));
-            alert("Smart contract methods logged to console. Please check browser console.");
-        } catch (error) {
-            console.error("Error debugging smart contract:", error);
-            alert("Failed to debug smart contract: " + error.message);
-        }
-    };
-
-    // Function to handle admin logout
-    const handleAdminLogout = () => {
-        logoutAdmin();
-        setIsAdminLoggedIn(false);
-    };
-
-    // Function to handle successful login
-    const handleLoginSuccess = () => {
-        setIsAdminLoggedIn(true);
-    };
-
-    // Function to handle edit concert action
-    const handleEditConcert = (concert) => {
-        setConcertToEdit(concert);
-        setShowEditModal(true);
-    };
-
-    // Function to save edited concert
-    const handleSaveConcert = async (updatedConcert) => {
-        try {
-            if (!isAdminLoggedIn) {
-                alert("You must be logged in as admin to edit concerts");
-                return;
-            }
-
-            // For blockchain concerts
-            if (!updatedConcert.id.startsWith('static-')) {
-                const program = getProgram(wallet);
-
-                // Call smart contract to update concert
-                await program.methods
-                    .updateConcert(
-                        updatedConcert.name,
-                        updatedConcert.venue,
-                        updatedConcert.date,
-                        updatedConcert.total
-                    )
-                    .accounts({
-                        authority: wallet.publicKey,
-                        concert: new PublicKey(updatedConcert.id),
-                        systemProgram: SystemProgram.programId,
-                    })
-                    .rpc();
-
-                alert("Concert updated successfully!");
-            } else {
-                // For static concerts, just update in local state
-                const updatedConcerts = concerts.map(c =>
-                    c.id === updatedConcert.id ? updatedConcert : c
-                );
-                setConcerts(updatedConcerts);
-                alert("Concert updated successfully (local only)!");
-            }
-
-            // Close the modal and refresh concerts
-            setShowEditModal(false);
-            fetchConcerts();
-
-        } catch (error) {
-            console.error("Error updating concert:", error);
-            alert("Failed to update concert: " + error.message);
-        }
-    };
-
-    // Function to delete concert (admin only)
-    // Function to delete concert (admin only) - dengan pembaruan untuk menghapus tiket terkait
-    const handleDeleteConcert = async (concertId) => {
-        if (!isAdminLoggedIn) {
-            alert("You must be logged in as admin to delete concerts");
-            return;
-        }
-
-        try {
-            const confirmDelete = window.confirm("Are you sure you want to delete this concert? All associated tickets will also be deleted.");
-            if (!confirmDelete) return;
-
-            // Jika ini adalah static concert, tangani secara lokal saja
-            if (concertId.startsWith('static-')) {
-                // Filter static concerts
-                const updatedConcerts = concerts.filter(c => c.id !== concertId);
-                setConcerts(updatedConcerts);
-
-                // Hapus juga tiket yang terkait dengan konser ini dari localStorage
-                try {
-                    const savedTickets = JSON.parse(localStorage.getItem('mintedStaticTickets') || '[]');
-                    const updatedTickets = savedTickets.filter(ticket => ticket.concertId !== concertId);
-
-                    // Simpan kembali tiket yang sudah difilter
-                    localStorage.setItem('mintedStaticTickets', JSON.stringify(updatedTickets));
-
-                    console.log(`Deleted ${savedTickets.length - updatedTickets.length} tickets associated with concert ${concertId}`);
-                } catch (err) {
-                    console.error("Error removing associated tickets from localStorage:", err);
+                    // Jika belum login dan admin, lakukan login test
+                    if (isAdmin && !AuthService.isAuthenticated()) {
+                        await AuthService.loginTest(walletAddress);
+                    }
+                } else {
+                    setIsAdmin(false);
                 }
-
-                alert("Static concert and its tickets deleted successfully!");
-                return;
-            }
-
-            // Untuk konser blockchain
-            const program = getProgram(wallet);
-            const concertPubkey = new PublicKey(concertId);
-
-            // Debugging: Print detailed information about the concert and wallet
-            const concertToDelete = concerts.find(c => c.id === concertId);
-            console.log("Attempting to delete concert:", {
-                id: concertId,
-                name: concertToDelete?.name,
-                creator: concertToDelete?.creator,
-                walletPubkey: wallet.publicKey?.toString(),
-                isOwner: isOwner(concertToDelete?.creator, wallet.publicKey),
-                isGlobalAdmin: isGlobalAdmin(wallet)
-            });
-
-            // Fetch concert data for verification
-            try {
-                const concertAccount = await program.account.concert.fetch(concertPubkey);
-                console.log("Concert data fetched:", {
-                    authority: concertAccount.authority.toString(),
-                    name: concertAccount.name
-                });
             } catch (err) {
-                console.error("Error fetching concert data:", err);
+                console.error('Error checking admin status:', err);
+                setIsAdmin(false);
             }
+        };
 
-            // Execute delete operation on blockchain
-            await program.methods
-                .deleteConcert()
-                .accounts({
-                    authority: wallet.publicKey,
-                    concert: concertPubkey,
-                    systemProgram: SystemProgram.programId,
-                })
-                .rpc();
+        checkAdminStatus();
+    }, [publicKey]);
 
-            // Untuk blockchain tickets, juga hapus referensi lokal jika ada
-            try {
-                // Hapus referensi dari localStorage
-                const blockchainTicketsKey = `blockchain_tickets_${concertId}`;
-                localStorage.removeItem(blockchainTicketsKey);
-                console.log(`Removed local references to blockchain tickets for concert ${concertId}`);
-            } catch (err) {
-                console.error("Error removing local blockchain ticket references:", err);
-            }
+    // Load concerts when component mounts or filters change
+    useEffect(() => {
+        fetchConcerts();
+    }, [currentPage, filter]);
 
-            alert("Concert and its tickets deleted successfully!");
-
-            // Refresh concert list
-            fetchConcerts();
-        } catch (error) {
-            console.error("Error deleting concert:", error);
-
-            if (error.message.includes("Unauthorized")) {
-                alert("Unauthorized: You don't have permission to delete this concert. Only the concert owner or global admin can delete concerts.");
-            } else {
-                alert("Failed to delete concert: " + error.message);
-            }
-        }
-    };
-
-    // Fetch concerts from blockchain
     const fetchConcerts = async () => {
         try {
             setLoading(true);
+            setError('');
 
-            if (!wallet.connected || !wallet.publicKey) {
-                console.log("Wallet not connected, using static data");
-                setConcerts(staticConcerts);
-                setLoading(false);
-                return;
-            }
-
-            const program = getProgram(wallet);
-
-            // Fetch all concert accounts
-            const concertAccounts = await program.account.concert.all();
-            console.log("Fetched concert accounts:", concertAccounts);
-
-            // Format concert data
-            const blockchainConcerts = concertAccounts.map((account) => {
-                const concert = account.account;
-                const creator = concert.authority.toString();
-
-                console.log(`Processing concert ${concert.name}:`, {
-                    id: account.publicKey.toString(),
-                    creator: creator,
-                    currentWallet: wallet.publicKey.toString(),
-                    isOwner: creator === wallet.publicKey.toString()
-                });
-
-                return {
-                    id: account.publicKey.toString(),
-                    name: concert.name,
-                    venue: concert.venue,
-                    date: concert.date,
-                    available: concert.totalTickets - concert.ticketsSold,
-                    total: concert.totalTickets,
-                    category: 'uncategorized',
-                    creator: creator // Store creator pubkey as string
-                };
+            // Construct query params
+            const params = new URLSearchParams({
+                page: currentPage,
+                limit: 8
             });
 
-            // Combine blockchain concerts with static concerts
-            const allConcerts = [...blockchainConcerts, ...staticConcerts];
-            setConcerts(allConcerts);
+            if (filter !== 'all') {
+                params.append('category', filter);
+            }
 
-        } catch (error) {
-            console.error("Error fetching concerts:", error);
-            setConcerts(staticConcerts);
-        } finally {
+            // Fetch approved concerts
+            const response = await fetch(`http://localhost:5000/api/concerts?${params}`);
+
+            if (!response.ok) {
+                throw new Error(`Gagal mengambil data konser: ${response.status}`);
+            }
+
+            const data = await response.json();
+            console.log('Data konser yang diambil:', data);
+
+            // Set concerts data
+            if (data.concerts) {
+                setConcerts(data.concerts);
+
+                // Set pagination
+                if (data.pagination) {
+                    setTotalPages(data.pagination.pages || 1);
+                }
+            } else if (Array.isArray(data)) {
+                setConcerts(data);
+            } else {
+                setConcerts([]);
+            }
+
+            setLoading(false);
+        } catch (err) {
+            console.error('Error saat mengambil konser:', err);
+            setError(`Gagal memuat daftar konser: ${err.message}`);
             setLoading(false);
         }
     };
 
-    // Load concerts on component mount and when wallet connection changes
-    useEffect(() => {
-        fetchConcerts();
-
-        // Set up event listener for when user returns to this page
-        const handleVisibilityChange = () => {
-            if (document.visibilityState === 'visible') {
-                fetchConcerts();
-            }
-        };
-
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-
-        // Setup regular refresh every 30 seconds if wallet is connected
-        let refreshInterval;
-        if (wallet.connected) {
-            refreshInterval = setInterval(() => {
-                fetchConcerts();
-            }, 30000); // Refresh every 30 seconds
-        }
-
-        // Cleanup function to remove event listener and clear interval when component unmounts
-        return () => {
-            document.removeEventListener('visibilitychange', handleVisibilityChange);
-            if (refreshInterval) clearInterval(refreshInterval);
-        };
-    }, [wallet.connected, wallet.publicKey]);
-
-    // Handle filter change
-    const handleFilterChange = (e) => {
-        setFilter(e.target.value);
+    // Handle delete concert confirmation
+    const handleDeleteClick = (concert) => {
+        setConcertToDelete(concert);
+        setDeleteConfirmOpen(true);
     };
 
-    // Filter concerts based on category
-    const filteredConcerts = filter === 'all'
-        ? concerts
-        : concerts.filter(concert => concert.category === filter);
+    // Execute delete concert
+    const handleDeleteConfirm = async () => {
+        if (!concertToDelete || !concertToDelete._id) return;
+
+        try {
+            setDeletingConcert(true);
+            setError('');
+
+            // Make sure we have a token
+            if (!AuthService.isAuthenticated()) {
+                const loginSuccess = await AuthService.loginTest(ADMIN_WALLET);
+                if (!loginSuccess) {
+                    throw new Error('Gagal login. Silakan refresh halaman dan coba lagi.');
+                }
+            }
+
+            const token = AuthService.getToken();
+            console.log("Using token for delete:", token ? "Token available" : "No token");
+
+            // URL endpoint admin untuk menghapus konser
+            const deleteUrl = `http://localhost:5000/api/admin/concerts/${concertToDelete._id}`;
+            console.log("Sending DELETE request to:", deleteUrl);
+
+            // Send delete request to backend
+            const response = await fetch(deleteUrl, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-auth-token': token
+                }
+            });
+
+            // Log full response untuk debugging
+            console.log("Delete response status:", response.status);
+
+            // Periksa respons
+            if (!response.ok) {
+                const contentType = response.headers.get('content-type');
+                let errorMsg = `Gagal menghapus konser (${response.status})`;
+
+                if (contentType && contentType.includes('application/json')) {
+                    try {
+                        const errorData = await response.json();
+                        errorMsg = errorData.msg || errorMsg;
+                    } catch (parseError) {
+                        console.error("Error parsing JSON response:", parseError);
+                    }
+                } else {
+                    // Jika bukan JSON, ambil teks respons
+                    try {
+                        const errorText = await response.text();
+                        console.error("Non-JSON error response:", errorText);
+                        if (errorText.includes("<!DOCTYPE html>")) {
+                            errorMsg = "Gagal menghapus konser: Respons tidak valid dari server";
+                        }
+                    } catch (textError) {
+                        console.error("Error getting response text:", textError);
+                    }
+                }
+
+                throw new Error(errorMsg);
+            }
+
+            // Parse successful response
+            let data;
+            try {
+                data = await response.json();
+                console.log("Delete response data:", data);
+            } catch (parseError) {
+                console.warn("Warning: Could not parse JSON response, but status was OK");
+                data = { success: true };
+            }
+
+            // Show success message
+            setSuccessMessage(`Konser "${concertToDelete.name}" berhasil dihapus`);
+
+            // Set timeout to clear the success message
+            setTimeout(() => {
+                setSuccessMessage('');
+            }, 5000);
+
+            // Refresh concert list
+            fetchConcerts();
+
+            // Close modal
+            setDeleteConfirmOpen(false);
+            setConcertToDelete(null);
+        } catch (err) {
+            console.error('Error deleting concert:', err);
+            setError(`Gagal menghapus konser: ${err.message}`);
+        } finally {
+            setDeletingConcert(false);
+        }
+    };
+
+    // Filter concerts by search term
+    const filteredConcerts = concerts.filter(concert =>
+        concert.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        concert.venue?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        concert.category?.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    // Pagination
+    const handlePageChange = (newPage) => {
+        setCurrentPage(newPage);
+    };
+
+    if (loading && concerts.length === 0) {
+        return (
+            <div className="flex justify-center items-center min-h-[300px]">
+                <LoadingSpinner />
+            </div>
+        );
+    }
 
     return (
-        <div className="pt-20 pb-16 px-4 bg-gray-900 min-h-screen">
-            <div className="max-w-7xl mx-auto">
-                <div className="flex justify-between items-center mb-8">
+        <section className="py-16 px-4 min-h-screen bg-gray-900 relative overflow-hidden">
+            {/* Background subtle effect - adjusted for better transition */}
+            <div className="absolute top-0 left-0 w-full h-full opacity-10">
+                <div className="absolute bottom-1/4 left-1/4 w-96 h-96 rounded-full bg-purple-600 filter blur-3xl"></div>
+                <div className="absolute top-1/4 right-1/4 w-96 h-96 rounded-full bg-indigo-600 filter blur-3xl"></div>
+            </div>
+
+            <div className="max-w-7xl mx-auto relative">
+                <motion.div
+                    className="flex justify-between items-center mb-8"
+                    initial={{ opacity: 0, y: -20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5 }}
+                >
                     <h1 className="text-3xl font-bold text-white flex items-center">
-                        Available <GradientText text="Concerts" className="ml-2 mr-2" />
-                        {isAdminLoggedIn && (
-                            <span className="ml-3 text-sm bg-purple-600 px-3 py-1 rounded-full">
+                        Upcoming <GradientText text="Concerts" className="ml-2" />
+                        {isAdmin && publicKey?.toString() === ADMIN_WALLET && (
+                            <span className="ml-3 text-sm bg-yellow-600 text-white px-2 py-1 rounded-full">
                                 Admin Mode
-                            </span>
-                        )}
-                        {isGlobalAdmin(wallet) && isAdminLoggedIn && (
-                            <span className="ml-3 text-sm bg-red-600 px-3 py-1 rounded-full">
-                                Global Admin
                             </span>
                         )}
                     </h1>
 
-                    <div className="flex items-center space-x-4">
-                        {/* Admin login/logout buttons */}
-                        {isAdminUser && (
-                            isAdminLoggedIn ? (
-                                <>
-                                    <button
-                                        onClick={debugSmartContract}
-                                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
-                                    >
-                                        Debug Contract
-                                    </button>
-                                    <button
-                                        onClick={handleAdminLogout}
-                                        className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors"
-                                    >
-                                        Logout Admin
-                                    </button>
-                                </>
-                            ) : (
-                                <button
-                                    onClick={handleAdminLogin}
-                                    className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg transition-colors"
-                                >
-                                    Login as Admin
-                                </button>
-                            )
-                        )}
+                    <div className="flex items-center space-x-2">
+                        <button
+                            onClick={() => {
+                                setSearchTerm('');
+                                setFilter('all');
+                                setCurrentPage(1);
+                                fetchConcerts();
+                            }}
+                            className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg transition-colors hover:from-purple-700 hover:to-indigo-700"
+                        >
+                            Muat Ulang
+                        </button>
+                    </div>
+                </motion.div>
 
-                        {/* Refresh button */}
+                {/* Success Message */}
+                {successMessage && (
+                    <motion.div
+                        className="bg-green-500/10 border border-green-500 rounded-lg p-4 mb-6 text-center"
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                    >
+                        <p className="text-green-500">{successMessage}</p>
+                    </motion.div>
+                )}
+
+                {/* Error Message */}
+                {error && (
+                    <div className="bg-red-500/10 border border-red-500 rounded-lg p-4 mb-6 text-center">
+                        <p className="text-red-500">{error}</p>
                         <button
                             onClick={fetchConcerts}
-                            className="bg-gray-800 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors"
+                            className="mt-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm"
                         >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 inline-block mr-2" viewBox="0 0 20 20" fill="currentColor">
-                                <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
-                            </svg>
-                            Refresh
+                            Coba Lagi
                         </button>
-
-                        {/* Filter dropdown */}
-                        <select
-                            className="bg-gray-800 text-white rounded-lg border border-gray-700 py-2 px-4 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                            onChange={handleFilterChange}
-                            value={filter}
-                        >
-                            <option value="all">All Genres</option>
-                            <option value="festival">Festival</option>
-                            <option value="rock">Rock</option>
-                            <option value="jazz">Jazz</option>
-                            <option value="classical">Classical</option>
-                            <option value="hiphop">Hip Hop</option>
-                            <option value="electronic">Electronic</option>
-                            <option value="pop">Pop</option>
-                            <option value="country">Country</option>
-                        </select>
                     </div>
-                </div>
+                )}
 
-                {loading ? (
-                    <div className="flex justify-center items-center h-96">
-                        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-purple-500"></div>
-                    </div>
-                ) : filteredConcerts.length > 0 ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                        {filteredConcerts.map((concert, index) => (
-                            <ConcertCard
-                                key={concert.id}
-                                concert={concert}
-                                index={index}
-                                isAdminUser={isAdminLoggedIn}
-                                onDeleteConcert={handleDeleteConcert}
-                                onEditConcert={handleEditConcert}
-                                wallet={wallet}
+                {/* Search and Filter Section */}
+                <motion.div
+                    className="bg-gray-800/50 rounded-lg p-4 mb-8 backdrop-blur-sm border border-gray-700/50"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5 }}
+                >
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                        <div className="relative w-full md:w-64">
+                            <input
+                                type="text"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                placeholder="Cari konser..."
+                                className="w-full bg-gray-700 text-white px-4 py-2 pr-10 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 border border-gray-600"
                             />
-                        ))}
+                            <svg className="absolute right-3 top-2.5 h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3">
+                            <div className="text-gray-400 text-sm mr-2">Filter:</div>
+                            <select
+                                value={filter}
+                                onChange={(e) => {
+                                    setFilter(e.target.value);
+                                    setCurrentPage(1); // Reset ke halaman pertama saat mengganti filter
+                                }}
+                                className="bg-gray-700 text-white px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 border border-gray-600"
+                            >
+                                <option value="all">Semua Kategori</option>
+                                <option value="Rock">Rock</option>
+                                <option value="Pop">Pop</option>
+                                <option value="Jazz">Jazz</option>
+                                <option value="Electronic">Electronic</option>
+                                <option value="Classical">Classical</option>
+                            </select>
+                        </div>
                     </div>
+                </motion.div>
+
+                {/* Concert List */}
+                {filteredConcerts.length === 0 ? (
+                    <motion.div
+                        className="bg-gray-800/50 rounded-lg p-10 text-center backdrop-blur-sm border border-gray-700/50"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.5 }}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mx-auto text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                        </svg>
+                        <h3 className="text-xl text-gray-400 mb-2">Tidak ada konser yang ditemukan</h3>
+                        <p className="text-gray-500 max-w-md mx-auto">
+                            Saat ini tidak ada konser yang tersedia. Silakan periksa kembali nanti atau ubah kriteria pencarian Anda.
+                        </p>
+                    </motion.div>
                 ) : (
-                    <div className="text-center py-20">
-                        <h3 className="text-2xl text-white mb-4">No concerts found</h3>
-                        <p className="text-gray-400">Try changing your filters or check back later.</p>
-                        {!wallet.connected && (
-                            <p className="text-gray-400 mt-4">
-                                Connect your wallet to see blockchain concerts
-                            </p>
+                    <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                            {filteredConcerts.map((concert, index) => (
+                                <ConcertCard
+                                    key={concert._id}
+                                    concert={concert}
+                                    index={index}
+                                    isAdmin={isAdmin}
+                                    onDeleteConcert={handleDeleteClick}
+                                />
+                            ))}
+                        </div>
+
+                        {/* Pagination */}
+                        {totalPages > 1 && (
+                            <div className="flex justify-center mt-10">
+                                <motion.div
+                                    className="flex space-x-2 bg-gray-800/50 p-2 rounded-lg border border-gray-700/50 backdrop-blur-sm"
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ duration: 0.5, delay: 0.2 }}
+                                >
+                                    <button
+                                        onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
+                                        disabled={currentPage === 1}
+                                        className="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600 disabled:opacity-50 transition-colors"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
+                                        </svg>
+                                    </button>
+
+                                    {Array.from({ length: totalPages }, (_, i) => {
+                                        // Show only 5 pages max with current page in the middle
+                                        const pageNum = i + 1;
+                                        const showDirectly =
+                                            totalPages <= 5 ||
+                                            pageNum === 1 ||
+                                            pageNum === totalPages ||
+                                            Math.abs(currentPage - pageNum) <= 1;
+
+                                        if (showDirectly) {
+                                            return (
+                                                <button
+                                                    key={i}
+                                                    onClick={() => handlePageChange(pageNum)}
+                                                    className={`w-10 h-10 flex items-center justify-center rounded ${currentPage === pageNum
+                                                        ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white'
+                                                        : 'bg-gray-700 text-white hover:bg-gray-600'
+                                                        } transition-colors`}
+                                                >
+                                                    {pageNum}
+                                                </button>
+                                            );
+                                        } else if (
+                                            (pageNum === 2 && currentPage > 3) ||
+                                            (pageNum === totalPages - 1 && currentPage < totalPages - 2)
+                                        ) {
+                                            return (
+                                                <span key={i} className="flex items-center justify-center text-gray-500">
+                                                    ...
+                                                </span>
+                                            );
+                                        }
+
+                                        return null;
+                                    })}
+
+                                    <button
+                                        onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
+                                        disabled={currentPage === totalPages}
+                                        className="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600 disabled:opacity-50 transition-colors"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                                        </svg>
+                                    </button>
+                                </motion.div>
+                            </div>
                         )}
-                    </div>
+                    </>
                 )}
             </div>
 
-            {/* Admin Login Modal */}
-            <AdminLoginModal
-                isOpen={showLoginModal}
-                onClose={() => setShowLoginModal(false)}
-                onLoginSuccess={handleLoginSuccess}
+            {/* Delete Confirmation Modal */}
+            <DeleteConfirmationModal
+                isOpen={deleteConfirmOpen}
+                onClose={() => {
+                    setDeleteConfirmOpen(false);
+                    setConcertToDelete(null);
+                }}
+                onConfirm={handleDeleteConfirm}
+                concertName={concertToDelete?.name || ''}
             />
-
-            {/* Edit Concert Modal */}
-            <EditConcertModal
-                isOpen={showEditModal}
-                concert={concertToEdit}
-                onClose={() => setShowEditModal(false)}
-                onSave={handleSaveConcert}
-            />
-        </div>
+        </section>
     );
 };
 

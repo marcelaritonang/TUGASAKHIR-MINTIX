@@ -1,435 +1,754 @@
 // src/components/MyTickets.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { getProgram } from '../utils/anchor';
+import { useNavigate, Link } from 'react-router-dom';
+import { Connection, PublicKey, clusterApiUrl } from '@solana/web3.js';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
+import { QRCodeSVG } from 'qrcode.react';
 
-// LoadingSpinner component
-const LoadingSpinner = ({ size = "h-8 w-8", color = "text-purple-500" }) => (
-    <svg className={`animate-spin ${size} ${color}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-    </svg>
-);
+// Services
+import ApiService from '../services/ApiService';
+import AuthService from '../services/AuthService';
+import blockchainService from '../services/blockchain';
+import { useConcerts } from '../context/ConcertContext';
 
-// Component for individual ticket
-const TicketCard = ({ ticket, onDelete, onView }) => {
-    const [isDeleting, setIsDeleting] = useState(false);
-    const [showConfirmDelete, setShowConfirmDelete] = useState(false);
+// Components
+import LoadingSpinner from './common/LoadingSpinner';
 
-    // Handle delete with confirmation
-    const handleDelete = async () => {
-        if (!showConfirmDelete) {
-            setShowConfirmDelete(true);
-            return;
-        }
+// Helper untuk format waktu
+const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
 
-        setIsDeleting(true);
-        try {
-            await onDelete(ticket.id);
-        } catch (error) {
-            console.error("Error deleting ticket:", error);
-            setIsDeleting(false);
-            setShowConfirmDelete(false);
-        }
+    const options = {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
     };
 
-    // Cancel delete action
-    const cancelDelete = () => {
-        setShowConfirmDelete(false);
-    };
+    return date.toLocaleDateString('id-ID', options);
+};
 
-    return (
-        <motion.div
-            layout
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.9 }}
-            transition={{ duration: 0.3 }}
-            className="bg-gray-800 rounded-lg overflow-hidden shadow-lg border border-gray-700 hover:border-purple-500/50 transition-all duration-300"
-        >
-            <div className="relative">
-                <div className="bg-gradient-to-r from-purple-600 to-indigo-600 p-4 relative overflow-hidden">
-                    {/* Ticket diagonal pattern */}
-                    <div className="absolute top-0 left-0 w-full h-full opacity-20">
-                        <div className="absolute inset-0" style={{
-                            backgroundImage: 'repeating-linear-gradient(45deg, #8B5CF6, #8B5CF6 5px, transparent 5px, transparent 15px)',
-                            backgroundSize: '20px 20px'
-                        }}></div>
-                    </div>
-
-                    {/* Mintix NFT Logo */}
-                    <div className="bg-gray-900/80 py-1 px-3 rounded inline-block mb-2">
-                        <span className="text-xs font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400">MINTIX NFT</span>
-                    </div>
-
-                    <h3 className="text-white font-bold text-xl relative">{ticket.concertName}</h3>
-                    <p className="text-purple-200 text-sm mt-1 opacity-80">{ticket.venue} • {ticket.date}</p>
-
-                    {/* Ticket Number */}
-                    <div className="absolute top-2 right-2 bg-gray-900/50 rounded-full py-1 px-3">
-                        <span className="text-xs text-white font-mono">#{ticket.shortId}</span>
-                    </div>
-                </div>
-
-                <div className="p-6 relative">
-                    {/* Ticket details */}
-                    <div className="flex flex-col space-y-3 mb-4">
-                        <div className="flex justify-between items-center">
-                            <span className="text-gray-400">Ticket Type</span>
-                            <span className="text-white font-medium px-3 py-1 bg-purple-900/30 rounded-full text-sm">{ticket.ticketType}</span>
-                        </div>
-
-                        {ticket.seatNumber && (
-                            <div className="flex justify-between items-center">
-                                <span className="text-gray-400">Seat</span>
-                                <span className="text-white font-medium">{ticket.seatNumber}</span>
-                            </div>
-                        )}
-
-                        <div className="flex justify-between items-center">
-                            <span className="text-gray-400">Status</span>
-                            <span className={`px-3 py-1 rounded-full text-sm font-medium ${ticket.used ? "bg-red-900/30 text-red-400" : "bg-green-900/30 text-green-400"}`}>
-                                {ticket.used ? "Used" : "Valid"}
-                            </span>
-                        </div>
-                    </div>
-
-                    {/* Action buttons */}
-                    <div className="flex gap-2 mt-4">
-                        <button
-                            onClick={() => onView(ticket)}
-                            className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 px-4 rounded-lg transition-colors duration-200"
-                        >
-                            View
-                        </button>
-
-                        <button
-                            onClick={handleDelete}
-                            disabled={isDeleting}
-                            className={`flex-1 ${showConfirmDelete
-                                ? 'bg-red-600 hover:bg-red-700'
-                                : 'bg-gray-700 hover:bg-gray-600'} text-white py-2 px-4 rounded-lg transition-colors duration-200 flex justify-center items-center`}
-                        >
-                            {isDeleting ? (
-                                <LoadingSpinner size="h-5 w-5" />
-                            ) : showConfirmDelete ? (
-                                'Confirm'
-                            ) : (
-                                'Delete'
-                            )}
-                        </button>
-
-                        {showConfirmDelete && (
-                            <button
-                                onClick={cancelDelete}
-                                className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-2 px-4 rounded-lg transition-colors duration-200"
-                            >
-                                Cancel
-                            </button>
-                        )}
-                    </div>
-                </div>
-            </div>
-        </motion.div>
-    );
+// Helper untuk memformat alamat wallet
+const formatAddress = (address, start = 6, end = 4) => {
+    if (!address) return 'N/A';
+    return `${address.slice(0, start)}...${address.slice(-end)}`;
 };
 
 const MyTickets = () => {
-    const [tickets, setTickets] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [deletingTicket, setDeletingTicket] = useState(null);
-    const [loadingStage, setLoadingStage] = useState('init'); // 'init', 'blockchain', 'concerts'
     const wallet = useWallet();
     const navigate = useNavigate();
+    const { loadMyTickets: contextLoadMyTickets } = useConcerts();
 
-    // Fetch tickets from blockchain and localStorage (for static tickets)
+    // State
+    const [tickets, setTickets] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [expandedTicket, setExpandedTicket] = useState(null);
+    const [transactionDetails, setTransactionDetails] = useState({});
+    const [concerts, setConcerts] = useState({});
+    const [ticketAnalytics, setTicketAnalytics] = useState({});
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [selectedFilter, setSelectedFilter] = useState('all');
+    const [sortOrder, setSortOrder] = useState('newest');
+    const [searchTerm, setSearchTerm] = useState('');
+    const [refreshInterval, setRefreshInterval] = useState(null);
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [ticketToDelete, setTicketToDelete] = useState(null);
+    const [deleteLoading, setDeleteLoading] = useState(false);
+    const [showToast, setShowToast] = useState(false);
+    const [toastMessage, setToastMessage] = useState('');
+    const [toastType, setToastType] = useState('success'); // 'success', 'error', 'info'
+
+    // Ref untuk mencegah multiple loading
+    const loadingRef = useRef(false);
+
+    // Setup connection
+    const connection = new Connection(
+        process.env.REACT_APP_SOLANA_RPC_URL || clusterApiUrl('devnet'),
+        'confirmed'
+    );
+
+    // Otentikasi dan memuat tiket
     useEffect(() => {
-        const fetchTickets = async () => {
-            try {
-                setLoading(true);
-                setLoadingStage('init');
-                setError(null);
-
-                // Array to store all tickets (blockchain + static)
-                let allTickets = [];
-
-                // Only attempt to fetch blockchain tickets if wallet is connected
-                if (wallet.connected) {
-                    setLoadingStage('blockchain');
-
-                    try {
-                        const program = getProgram(wallet);
-
-                        // Fetch tickets owned by the current wallet from blockchain
-                        const userTickets = await program.account.ticket.all([
-                            {
-                                memcmp: {
-                                    offset: 8, // Assuming owner field is at offset 8
-                                    bytes: wallet.publicKey.toBase58()
-                                }
-                            }
-                        ]);
-
-                        // Process blockchain tickets
-                        if (userTickets && userTickets.length > 0) {
-                            const blockchainTickets = [];
-
-                            // Verify each ticket's concert still exists
-                            for (const ticket of userTickets) {
-                                try {
-                                    const concertPublicKey = ticket.account.concert;
-
-                                    // Try to fetch the concert - this will throw if it doesn't exist
-                                    await program.account.concert.fetch(concertPublicKey);
-
-                                    // If we get here, the concert exists
-                                    blockchainTickets.push({
-                                        id: ticket.publicKey.toString(),
-                                        shortId: ticket.publicKey.toString().substring(0, 5) + '...',
-                                        concertId: ticket.account.concert.toString(),
-                                        concertName: 'Blockchain Concert',  // We'll update this later
-                                        ticketType: ticket.account.ticketType,
-                                        seatNumber: ticket.account.seatNumber || 'N/A',
-                                        used: ticket.account.used,
-                                        isBlockchain: true,
-                                        venue: 'Various Venues',
-                                        date: 'Upcoming'
-                                    });
-                                } catch (err) {
-                                    console.log(`Skipping ticket ${ticket.publicKey.toString()} because its concert no longer exists`);
-                                    // Skip this ticket because its concert doesn't exist
-                                }
-                            }
-
-                            allTickets = [...blockchainTickets];
-                        }
-                    } catch (err) {
-                        console.error("Error fetching blockchain tickets:", err);
-                        // Continue execution to fetch static tickets
-                    }
-                }
-
-                // Fetch static tickets from localStorage
-                setLoadingStage('concerts');
-
+        const init = async () => {
+            if (wallet.connected && wallet.publicKey) {
                 try {
-                    const savedTickets = JSON.parse(localStorage.getItem('mintedStaticTickets') || '[]');
-
-                    // Fetch all available concerts to verify static tickets
-                    let availableConcerts = [];
-                    try {
-                        // Attempt to get static concerts (this would normally come from your state or API)
-                        const staticConcerts = [
-                            { id: 'static-1', name: 'EDM Festival 2025' },
-                            { id: 'static-2', name: 'Rock Legends' },
-                            { id: 'static-3', name: 'Jazz Night' },
-                            { id: 'static-4', name: 'Classical Symphony' },
-                            { id: 'static-5', name: 'Hip Hop Summit' },
-                            { id: 'static-6', name: 'Electronic Music Night' },
-                            { id: 'static-7', name: 'Pop Sensation' },
-                            { id: 'static-8', name: 'Country Music Festival' },
-                        ];
-                        availableConcerts = staticConcerts.map(c => c.id);
-                    } catch (err) {
-                        console.error("Error fetching available concerts:", err);
+                    if (!AuthService.isAuthenticated()) {
+                        console.log("Attempting auto-login");
+                        const success = await AuthService.loginTest(wallet.publicKey.toString());
+                        setIsAuthenticated(success);
+                    } else {
+                        setIsAuthenticated(true);
                     }
 
-                    if (savedTickets.length > 0) {
-                        // Filter out tickets for concerts that no longer exist
-                        const validStaticTickets = savedTickets.filter(ticket =>
-                            availableConcerts.includes(ticket.concertId)
-                        );
+                    await loadTickets();
 
-                        // If we found tickets that are no longer valid, update localStorage
-                        if (validStaticTickets.length < savedTickets.length) {
-                            console.log(`Removing ${savedTickets.length - validStaticTickets.length} tickets for deleted concerts`);
-                            localStorage.setItem('mintedStaticTickets', JSON.stringify(validStaticTickets));
-                        }
-
-                        const staticTickets = validStaticTickets.map((ticket, index) => ({
-                            id: `static-${index}-${ticket.concertId}-${ticket.seatNumber}`,
-                            shortId: ticket.concertId.split('-')[1] || String(index + 1000),
-                            concertId: ticket.concertId,
-                            concertName: ticket.concertName || 'Unknown Concert',
-                            ticketType: ticket.ticketType || 'Regular',
-                            seatNumber: ticket.seatNumber || 'N/A',
-                            used: false,
-                            isBlockchain: false,
-                            date: ticket.date ? new Date(ticket.date).toLocaleDateString() : 'Upcoming',
-                            venue: 'Virtual Arena',
-                            mintDate: ticket.date
-                        }));
-
-                        allTickets = [...allTickets, ...staticTickets];
-                    }
+                    // Setup auto-refresh interval
+                    setupAutoRefresh();
                 } catch (err) {
-                    console.error("Error fetching static tickets:", err);
+                    console.error("Error during authentication:", err);
+                    setLoading(false);
                 }
-
-                // Sort tickets by date (most recent first)
-                allTickets.sort((a, b) => {
-                    // If mintDate exists, use it for sorting
-                    if (a.mintDate && b.mintDate) {
-                        return new Date(b.mintDate) - new Date(a.mintDate);
-                    }
-                    return 0;
-                });
-
-                setTickets(allTickets);
-            } catch (error) {
-                console.error("Error fetching tickets:", error);
-                setError("Failed to load tickets. Please try again later.");
-            } finally {
+            } else {
                 setLoading(false);
-                setLoadingStage('done');
             }
         };
 
-        fetchTickets();
+        init();
+
+        // Cleanup interval on unmount
+        return () => {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+        };
     }, [wallet.connected, wallet.publicKey]);
 
-    // Function to delete a ticket
-    const handleDeleteTicket = async (ticketId) => {
-        setDeletingTicket(ticketId);
+    // Setup auto-refresh
+    const setupAutoRefresh = () => {
+        // Clear any existing interval
+        if (refreshInterval) {
+            clearInterval(refreshInterval);
+        }
+
+        // Create new interval for auto refresh every 30 seconds
+        const interval = setInterval(() => {
+            if (!loadingRef.current) {
+                console.log("Auto-refreshing tickets...");
+                loadTickets(true); // silent refresh
+            }
+        }, 30000);
+
+        setRefreshInterval(interval);
+    };
+
+    // Memuat tiket
+    const loadTickets = async (silent = false) => {
+        // Prevent multiple simultaneous loadings
+        if (loadingRef.current) return;
+
+        loadingRef.current = true;
+        if (!silent) setLoading(true);
 
         try {
-            if (ticketId.startsWith('static-')) {
-                // For static tickets, remove from localStorage
-                const savedTickets = JSON.parse(localStorage.getItem('mintedStaticTickets') || '[]');
-                const [_, __, concertId, seatNumber] = ticketId.split('-');
+            setError('');
 
-                const updatedTickets = savedTickets.filter(
-                    ticket => !(ticket.concertId === concertId && ticket.seatNumber === seatNumber)
-                );
+            const userTickets = await ApiService.getMyTickets();
+            console.log("User tickets:", userTickets);
 
-                localStorage.setItem('mintedStaticTickets', JSON.stringify(updatedTickets));
+            if (Array.isArray(userTickets) && userTickets.length > 0) {
+                // Dapatkan data konser terkait untuk setiap tiket
+                const concertIds = [...new Set(userTickets.map(ticket => ticket.concertId))];
+                const concertDetails = {};
 
-                // Update UI
-                setTickets(tickets.filter(ticket => ticket.id !== ticketId));
+                await Promise.all(concertIds.map(async (id) => {
+                    try {
+                        const concert = await ApiService.getConcert(id);
+                        concertDetails[id] = concert;
+                    } catch (err) {
+                        console.error(`Error fetching concert ${id}:`, err);
+                        // Jika konser tidak ditemukan, tetap buat entri kosong
+                        concertDetails[id] = null;
+                    }
+                }));
+
+                setConcerts(concertDetails);
+
+                // Ambil detail transaksi untuk setiap tiket
+                const txDetails = {};
+                const analytics = {};
+
+                await Promise.all(userTickets.map(async (ticket) => {
+                    if (ticket.transactionSignature) {
+                        try {
+                            // Dapatkan data transaksi
+                            const txData = await connection.getTransaction(ticket.transactionSignature);
+
+                            if (txData) {
+                                const blockTime = txData.blockTime ? new Date(txData.blockTime * 1000) : null;
+                                const slot = txData.slot;
+                                const confirmations = txData.meta?.confirmations || 0;
+                                const fee = txData.meta?.fee || 0;
+
+                                // Hitung TPS berdasarkan data transaksi
+                                let tps = 'N/A';
+                                if (txData.meta && txData.meta.txProcessingTime) {
+                                    tps = (1000 / txData.meta.txProcessingTime).toFixed(2);
+                                } else {
+                                    // Estimasi TPS jika tidak tersedia langsung
+                                    const perfSamples = await connection.getRecentPerformanceSamples(1);
+                                    if (perfSamples && perfSamples.length > 0) {
+                                        tps = perfSamples[0].numTransactions / perfSamples[0].samplePeriodSecs;
+                                        tps = tps.toFixed(2);
+                                    }
+                                }
+
+                                txDetails[ticket._id] = {
+                                    signature: ticket.transactionSignature,
+                                    blockTime,
+                                    slot,
+                                    confirmations,
+                                    fee,
+                                    tps
+                                };
+
+                                // Generate analytics
+                                analytics[ticket._id] = {
+                                    mintTime: blockTime,
+                                    tps,
+                                    fee,
+                                    isValid: true,
+                                    isMintedOnChain: true
+                                };
+                            } else {
+                                // Jika transaksi tidak ditemukan di blockchain
+                                txDetails[ticket._id] = {
+                                    signature: ticket.transactionSignature,
+                                    error: 'Transaction not found on blockchain'
+                                };
+
+                                analytics[ticket._id] = {
+                                    isValid: false,
+                                    isMintedOnChain: false,
+                                    error: 'Transaction not found'
+                                };
+                            }
+                        } catch (err) {
+                            console.error(`Error fetching transaction ${ticket.transactionSignature}:`, err);
+                            txDetails[ticket._id] = {
+                                signature: ticket.transactionSignature,
+                                error: err.message
+                            };
+
+                            analytics[ticket._id] = {
+                                isValid: false,
+                                isMintedOnChain: false,
+                                error: err.message
+                            };
+                        }
+                    } else {
+                        // Tiket tanpa signature transaksi
+                        analytics[ticket._id] = {
+                            isValid: false,
+                            isMintedOnChain: false,
+                            error: 'No transaction signature'
+                        };
+                    }
+                }));
+
+                setTransactionDetails(txDetails);
+                setTicketAnalytics(analytics);
+                setTickets(userTickets);
             } else {
-                // For blockchain tickets, we would need to call a smart contract function
-                // This is a placeholder for the real implementation
-                alert("Deleting blockchain tickets is not implemented yet");
-                return;
+                setTickets([]);
             }
-
-            // Simulate a short delay for better UX
-            await new Promise(resolve => setTimeout(resolve, 500));
-
-        } catch (error) {
-            console.error("Error deleting ticket:", error);
-            throw error;
+        } catch (err) {
+            console.error("Error loading tickets:", err);
+            if (!silent) setError('Gagal memuat tiket. Silakan coba lagi nanti.');
         } finally {
-            setDeletingTicket(null);
+            if (!silent) setLoading(false);
+            loadingRef.current = false;
         }
     };
 
-    // Function to view ticket details
-    const handleViewTicket = (ticket) => {
-        // For now just show an alert, in a real app you would navigate to a ticket detail page
-        console.log("View ticket:", ticket);
-        // navigate(`/ticket/${ticket.id}`);
-        alert(`Viewing ticket ${ticket.id} for ${ticket.concertName}`);
+    // Filter tiket berdasarkan status
+    const getFilteredTickets = () => {
+        let filtered = [...tickets];
+
+        // Filter berdasarkan jenis
+        if (selectedFilter === 'valid') {
+            filtered = filtered.filter(ticket =>
+                ticketAnalytics[ticket._id]?.isValid &&
+                concerts[ticket.concertId] !== null
+            );
+        } else if (selectedFilter === 'invalid') {
+            filtered = filtered.filter(ticket =>
+                !ticketAnalytics[ticket._id]?.isValid ||
+                concerts[ticket.concertId] === null
+            );
+        } else if (selectedFilter === 'verified') {
+            filtered = filtered.filter(ticket => ticket.isVerified);
+        }
+
+        // Filter berdasarkan pencarian
+        if (searchTerm) {
+            filtered = filtered.filter(ticket => {
+                const concertName = concerts[ticket.concertId]?.name?.toLowerCase() || '';
+                const seatNumber = ticket.seatNumber?.toLowerCase() || '';
+                const search = searchTerm.toLowerCase();
+                return concertName.includes(search) || seatNumber.includes(search);
+            });
+        }
+
+        // Urutkan tiket
+        filtered.sort((a, b) => {
+            const timeA = ticketAnalytics[a._id]?.mintTime || new Date(a.createdAt || 0);
+            const timeB = ticketAnalytics[b._id]?.mintTime || new Date(b.createdAt || 0);
+
+            return sortOrder === 'newest'
+                ? timeB - timeA
+                : timeA - timeB;
+        });
+
+        return filtered;
     };
 
-    // Loading screen based on the stage
-    const renderLoadingScreen = () => {
-        const loadingMessages = {
-            'init': 'Initializing...',
-            'blockchain': 'Checking blockchain tickets...',
-            'concerts': 'Loading concert information...',
-            'done': 'Almost done...'
+    // Fungsi untuk memverifikasi tiket
+    const handleVerifyTicket = async (ticketId) => {
+        try {
+            setLoading(true);
+            const result = await ApiService.verifyTicket(ticketId);
+
+            if (result.success) {
+                // Update tiket di state
+                setTickets(prev => prev.map(ticket => {
+                    if (ticket._id === ticketId) {
+                        return { ...ticket, isVerified: true, verifiedAt: new Date() };
+                    }
+                    return ticket;
+                }));
+
+                // Update Context
+                contextLoadMyTickets();
+
+                showToastMessage('Tiket berhasil diverifikasi', 'success');
+            } else {
+                showToastMessage('Gagal memverifikasi tiket: ' + (result.msg || 'Unknown error'), 'error');
+            }
+        } catch (err) {
+            console.error("Error verifying ticket:", err);
+            showToastMessage('Gagal memverifikasi tiket: ' + err.message, 'error');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // BARU: Fungsi untuk menampilkan toast message
+    const showToastMessage = (message, type = 'success') => {
+        setToastMessage(message);
+        setToastType(type);
+        setShowToast(true);
+
+        // Otomatis hide toast setelah 3 detik
+        setTimeout(() => {
+            setShowToast(false);
+        }, 3000);
+    };
+
+    // BARU: Fungsi untuk menghapus tiket
+    const handleDeleteTicket = async () => {
+        if (!ticketToDelete) return;
+
+        setDeleteLoading(true);
+
+        try {
+            // Panggil API untuk menghapus tiket
+            const response = await fetch(`${ApiService.baseUrl}/tickets/${ticketToDelete._id}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-auth-token': AuthService.getToken()
+                }
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.msg || `Failed to delete ticket: ${response.status}`);
+            }
+
+            // Jika berhasil, update state
+            setTickets(prev => prev.filter(ticket => ticket._id !== ticketToDelete._id));
+            showToastMessage('Tiket berhasil dihapus', 'success');
+
+            // Update Context
+            contextLoadMyTickets();
+
+        } catch (error) {
+            console.error("Error deleting ticket:", error);
+            showToastMessage(`Gagal menghapus tiket: ${error.message}`, 'error');
+        } finally {
+            setDeleteLoading(false);
+            setIsDeleteModalOpen(false);
+            setTicketToDelete(null);
+        }
+    };
+
+    // BARU: Tampilkan konfirmasi hapus
+    const openDeleteModal = (ticket) => {
+        setTicketToDelete(ticket);
+        setIsDeleteModalOpen(true);
+    };
+
+    // Render QR Code untuk tiket
+    const renderQRCode = (ticket) => {
+        // Data yang dienkode ke dalam QR
+        const qrData = JSON.stringify({
+            id: ticket._id,
+            concertId: ticket.concertId,
+            seat: ticket.seatNumber,
+            owner: ticket.owner,
+            valid: ticketAnalytics[ticket._id]?.isValid,
+            signature: ticket.transactionSignature?.substring(0, 10)
+        });
+
+        return (
+            <div className="qr-container bg-white p-4 rounded-lg shadow-lg">
+                <QRCodeSVG
+                    value={qrData}
+                    size={150}
+                    level="H"
+                    includeMargin={true}
+                    imageSettings={{
+                        src: '/logo192.png',
+                        height: 30,
+                        width: 30,
+                        excavate: true
+                    }}
+                />
+            </div>
+        );
+    };
+
+    // Render detail transaksi blockchain
+    const renderBlockchainDetails = (ticket) => {
+        const txDetail = transactionDetails[ticket._id];
+
+        if (!txDetail) {
+            return (
+                <div className="bg-red-500/10 p-3 rounded-lg mt-2">
+                    <p className="text-red-400 text-sm">Data blockchain tidak tersedia</p>
+                </div>
+            );
+        }
+
+        if (txDetail.error) {
+            return (
+                <div className="bg-red-500/10 p-3 rounded-lg mt-2">
+                    <p className="text-red-400 text-sm">Error: {txDetail.error}</p>
+                </div>
+            );
+        }
+
+        return (
+            <div className="bg-gray-800/50 p-3 rounded-lg mt-2 border border-gray-700/70">
+                <h4 className="text-gray-300 font-medium text-sm mb-2">Detail Blockchain:</h4>
+                <div className="space-y-1 text-xs">
+                    <div className="flex justify-between">
+                        <span className="text-gray-400">Signature:</span>
+                        <a
+                            href={`https://explorer.solana.com/tx/${txDetail.signature}?cluster=devnet`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-purple-400 hover:text-purple-300 truncate max-w-[180px]"
+                        >
+                            {formatAddress(txDetail.signature, 10, 5)}
+                        </a>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-gray-400">Waktu Mint:</span>
+                        <span className="text-white">{txDetail.blockTime ? formatDate(txDetail.blockTime) : 'N/A'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-gray-400">TPS Saat Minting:</span>
+                        <span className="text-yellow-400 font-medium">{txDetail.tps || 'N/A'} TPS</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-gray-400">Fee:</span>
+                        <span className="text-white">{txDetail.fee / 1000000000} SOL</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-gray-400">Slot:</span>
+                        <span className="text-white">{txDetail.slot || 'N/A'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span className="text-gray-400">Konfirmasi:</span>
+                        <span className="text-white">{txDetail.confirmations || 'N/A'}</span>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    // Render card untuk tiket
+    const renderTicketCard = (ticket) => {
+        const concertDetail = concerts[ticket.concertId];
+        const analytics = ticketAnalytics[ticket._id];
+        const isExpanded = expandedTicket === ticket._id;
+        const isTicketValid = analytics?.isValid && concertDetail !== null;
+        const isConcertDeleted = concertDetail === null;
+
+        // Status badge style
+        const getBadgeStyle = () => {
+            if (isConcertDeleted) {
+                return 'bg-red-900/20 text-red-400 border-red-700';
+            }
+            if (!isTicketValid) {
+                return 'bg-orange-900/20 text-orange-400 border-orange-700';
+            }
+            if (ticket.isVerified) {
+                return 'bg-green-900/20 text-green-400 border-green-700';
+            }
+            return 'bg-yellow-900/20 text-yellow-400 border-yellow-700';
+        };
+
+        // Status text
+        const getStatusText = () => {
+            if (isConcertDeleted) {
+                return 'Konser Dihapus';
+            }
+            if (!isTicketValid) {
+                return 'Tidak Valid';
+            }
+            return ticket.isVerified ? 'Terverifikasi' : 'Belum Digunakan';
         };
 
         return (
             <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="flex flex-col items-center justify-center py-12 text-center space-y-4"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+                className={`bg-gray-800 rounded-lg overflow-hidden shadow-lg border ${isTicketValid && !isConcertDeleted
+                    ? 'border-purple-700/30 hover:border-purple-500/50'
+                    : 'border-red-700/30 hover:border-red-500/50'
+                    } transition-all duration-300`}
             >
-                <LoadingSpinner size="h-12 w-12" />
-                <p className="text-gray-300 animate-pulse">{loadingMessages[loadingStage]}</p>
+                {/* Header - Concert Info */}
+                <div className="p-4 bg-gradient-to-r from-purple-900/30 to-indigo-900/30">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <h3 className="text-white font-bold text-lg">
+                                {concertDetail ? concertDetail.name : 'Konser Dihapus'}
+                            </h3>
+                            <p className="text-gray-400 text-sm">
+                                {concertDetail ? concertDetail.venue : 'Lokasi tidak tersedia'}
+                            </p>
+                        </div>
+                        <div className={`px-3 py-1 rounded-full text-xs border ${getBadgeStyle()}`}>
+                            {getStatusText()}
+                        </div>
+                    </div>
+
+                    <div className="mt-2 text-sm">
+                        <p className="text-gray-300">
+                            Tanggal: {concertDetail
+                                ? formatDate(concertDetail.date)
+                                : 'Tidak tersedia'
+                            }
+                        </p>
+                    </div>
+                </div>
+
+                {/* Ticket Details */}
+                <div className="p-4">
+                    <div className="flex justify-between mb-4">
+                        <div>
+                            <p className="text-gray-400 text-sm mb-1">Tipe Tiket</p>
+                            <p className="text-white font-medium">{ticket.sectionName}</p>
+                        </div>
+                        <div>
+                            <p className="text-gray-400 text-sm mb-1">Kursi</p>
+                            <p className="text-white font-medium">{ticket.seatNumber || 'General'}</p>
+                        </div>
+                    </div>
+
+                    <div className="flex justify-between mb-2">
+                        <div>
+                            <p className="text-gray-400 text-sm mb-1">Pemilik</p>
+                            <p className="text-white font-mono text-sm truncate w-32">{formatAddress(ticket.owner)}</p>
+                        </div>
+                        <div>
+                            <p className="text-gray-400 text-sm mb-1">Dibuat</p>
+                            <p className="text-white text-sm">{formatDate(analytics?.mintTime || ticket.createdAt)}</p>
+                        </div>
+                    </div>
+
+                    {/* Expanded View */}
+                    {isExpanded && (
+                        <div className="mt-4 space-y-3">
+                            {/* QR Code and Transaction */}
+                            <div className="flex flex-wrap md:flex-nowrap gap-4 justify-between">
+                                {renderQRCode(ticket)}
+                                <div className="flex-1">
+                                    {renderBlockchainDetails(ticket)}
+                                </div>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="flex gap-2 mt-3">
+                                {isTicketValid && !ticket.isVerified && (
+                                    <button
+                                        onClick={() => handleVerifyTicket(ticket._id)}
+                                        className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex-1"
+                                        disabled={loading}
+                                    >
+                                        {loading ? <LoadingSpinner /> : 'Verifikasi Tiket'}
+                                    </button>
+                                )}
+
+                                {/* BARU: Tombol hapus tiket */}
+                                {(isConcertDeleted || !isTicketValid) && (
+                                    <button
+                                        onClick={() => openDeleteModal(ticket)}
+                                        className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors flex-1"
+                                        disabled={loading}
+                                    >
+                                        {loading ? <LoadingSpinner /> : 'Hapus Tiket'}
+                                    </button>
+                                )}
+
+                                <a
+                                    href={`https://explorer.solana.com/tx/${ticket.transactionSignature}?cluster=devnet`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex-1 text-center"
+                                >
+                                    Lihat di Explorer
+                                </a>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Toggle Button */}
+                    <button
+                        onClick={() => setExpandedTicket(isExpanded ? null : ticket._id)}
+                        className="w-full mt-3 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors text-sm"
+                    >
+                        {isExpanded ? 'Sembunyikan Detail' : 'Lihat Detail'}
+                    </button>
+                </div>
             </motion.div>
         );
     };
 
-    // Empty state screen
-    const renderEmptyState = () => (
-        <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-center py-16 px-4 bg-gray-800/50 rounded-lg border border-gray-700"
-        >
-            <div className="inline-flex justify-center items-center w-16 h-16 bg-gray-900 rounded-full mb-4">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
-                </svg>
-            </div>
-            <h3 className="text-xl font-medium text-white mb-2">No tickets found</h3>
-            <p className="text-gray-400 mb-8 max-w-md mx-auto">You don't have any tickets yet. Browse available concerts and get your first NFT ticket!</p>
-            <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => navigate('/explore')}
-                className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-3 px-6 rounded-lg inline-block font-medium hover:shadow-lg hover:shadow-purple-500/20 transition duration-300"
-            >
-                Browse Concerts
-            </motion.button>
-        </motion.div>
-    );
+    // Render modal konfirmasi hapus tiket
+    const renderDeleteModal = () => {
+        if (!isDeleteModalOpen || !ticketToDelete) return null;
 
-    // Error state
-    const renderError = () => (
-        <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="text-center py-12 bg-red-900/20 border border-red-800 rounded-lg"
-        >
-            <div className="inline-flex justify-center items-center w-12 h-12 bg-red-900/50 rounded-full mb-4">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-            </div>
-            <h3 className="text-xl font-medium text-white mb-2">Something went wrong</h3>
-            <p className="text-red-300 mb-6">{error}</p>
-            <button
-                onClick={() => window.location.reload()}
-                className="bg-red-600 hover:bg-red-700 text-white py-2 px-6 rounded-lg inline-block transition-colors duration-200"
-            >
-                Try Again
-            </button>
-        </motion.div>
-    );
+        const concertName = concerts[ticketToDelete.concertId]?.name || 'Konser Dihapus';
 
-    if (!wallet.connected) {
+        return (
+            <div className="fixed inset-0 flex items-center justify-center z-50 bg-black/70">
+                <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
+                    <h3 className="text-xl font-bold text-white mb-4">Konfirmasi Hapus Tiket</h3>
+                    <p className="text-gray-300 mb-6">
+                        Apakah Anda yakin ingin menghapus tiket untuk konser "{concertName}" dengan kursi {ticketToDelete.seatNumber}?
+                    </p>
+                    {concerts[ticketToDelete.concertId] === null && (
+                        <div className="bg-yellow-500/10 border border-yellow-500/50 rounded p-3 mb-4">
+                            <p className="text-yellow-400 text-sm">
+                                Konser untuk tiket ini telah dihapus. Menghapus tiket ini tidak akan mempengaruhi blockchain.
+                            </p>
+                        </div>
+                    )}
+                    <div className="flex justify-end space-x-3">
+                        <button
+                            onClick={() => {
+                                setIsDeleteModalOpen(false);
+                                setTicketToDelete(null);
+                            }}
+                            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors"
+                            disabled={deleteLoading}
+                        >
+                            Batal
+                        </button>
+                        <button
+                            onClick={handleDeleteTicket}
+                            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded transition-colors flex items-center"
+                            disabled={deleteLoading}
+                        >
+                            {deleteLoading ? (
+                                <>
+                                    <LoadingSpinner size="sm" />
+                                    <span className="ml-2">Menghapus...</span>
+                                </>
+                            ) : (
+                                'Hapus Tiket'
+                            )}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    // Render toast notification
+    const renderToast = () => {
+        if (!showToast) return null;
+
+        const bgColor = toastType === 'success' ? 'bg-green-500' :
+            toastType === 'error' ? 'bg-red-500' :
+                'bg-blue-500';
+
+        return (
+            <div className="fixed bottom-4 right-4 z-50">
+                <motion.div
+                    initial={{ opacity: 0, y: 50 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 50 }}
+                    className={`${bgColor} text-white px-4 py-3 rounded-lg shadow-lg flex items-center`}
+                >
+                    {toastType === 'success' && (
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                    )}
+                    {toastType === 'error' && (
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                        </svg>
+                    )}
+                    {toastType === 'info' && (
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                        </svg>
+                    )}
+                    <span>{toastMessage}</span>
+                </motion.div>
+            </div>
+        );
+    };
+
+    // Render saat loading
+    if (loading && !tickets.length) {
         return (
             <div className="min-h-screen bg-gray-900 pt-24 pb-16 px-4">
-                {/* Background effects */}
-                <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
-                    <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full bg-purple-600 filter blur-3xl"></div>
-                    <div className="absolute bottom-1/4 right-1/4 w-96 h-96 rounded-full bg-indigo-600 filter blur-3xl"></div>
-                </div>
-
-                <div className="max-w-4xl mx-auto text-center">
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.5 }}
-                        className="bg-gray-800/50 rounded-xl p-8 border border-gray-700"
-                    >
-                        <h2 className="text-3xl font-bold text-white mb-4">My NFT Tickets</h2>
-                        <p className="text-gray-400 mb-8">Connect your wallet to view and manage your tickets</p>
-                        <WalletMultiButton className="!bg-gradient-to-br !from-purple-600 !to-indigo-600 hover:!shadow-lg hover:!shadow-purple-500/20 transition duration-300" />
-                    </motion.div>
+                <div className="max-w-5xl mx-auto">
+                    <div className="flex flex-col items-center justify-center mt-20">
+                        <LoadingSpinner size="lg" />
+                        <p className="text-gray-300 mt-4">Memuat tiket...</p>
+                    </div>
                 </div>
             </div>
         );
     }
+
+    // Render wallet not connected
+    if (!wallet.connected) {
+        return (
+            <div className="min-h-screen bg-gray-900 pt-24 pb-16 px-4">
+                <div className="max-w-5xl mx-auto">
+                    <h1 className="text-3xl font-bold text-white text-center mb-10">Tiket Saya</h1>
+
+                    <div className="bg-gray-800 rounded-lg p-8 text-center">
+                        <h2 className="text-2xl text-white mb-4">Hubungkan Wallet Anda</h2>
+                        <p className="text-gray-400 mb-6">Hubungkan wallet Solana Anda untuk melihat tiket</p>
+                        <div className="flex justify-center">
+                            <WalletMultiButton className="!bg-gradient-to-br !from-purple-600 !to-indigo-600 hover:!shadow-lg hover:!shadow-purple-500/20 transition duration-300" />
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    const filteredTickets = getFilteredTickets();
 
     return (
         <div className="min-h-screen bg-gray-900 pt-24 pb-16 px-4">
@@ -439,53 +758,158 @@ const MyTickets = () => {
                 <div className="absolute bottom-1/4 right-1/4 w-96 h-96 rounded-full bg-indigo-600 filter blur-3xl"></div>
             </div>
 
-            <div className="max-w-6xl mx-auto">
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5 }}
-                >
-                    <h2 className="text-3xl font-bold text-white mb-2">My NFT Tickets</h2>
-                    <p className="text-gray-400 mb-8">Manage your concert tickets and view their details</p>
-                </motion.div>
+            <div className="max-w-5xl mx-auto relative">
+                <h1 className="text-3xl font-bold text-white text-center mb-6">Tiket Saya</h1>
 
-                {error ? renderError() : (
-                    <>
-                        {loading ? renderLoadingScreen() : (
-                            <>
-                                {tickets.length === 0 ? renderEmptyState() : (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                        <AnimatePresence>
-                                            {tickets.map(ticket => (
-                                                <TicketCard
-                                                    key={ticket.id}
-                                                    ticket={ticket}
-                                                    onDelete={handleDeleteTicket}
-                                                    onView={handleViewTicket}
-                                                />
-                                            ))}
-                                        </AnimatePresence>
-                                    </div>
-                                )}
-                            </>
-                        )}
-                    </>
+                {error && (
+                    <div className="bg-red-500/10 border border-red-500 rounded-lg p-4 mb-6">
+                        <p className="text-red-500">{error}</p>
+                    </div>
                 )}
 
-                {/* Add this back button for better navigation */}
-                <motion.button
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.5 }}
-                    onClick={() => navigate('/explore')}
-                    className="mt-12 inline-flex items-center text-purple-400 hover:text-purple-300 transition-colors duration-200"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd" />
-                    </svg>
-                    Back to Concerts
-                </motion.button>
+                {/* Control Bar */}
+                <div className="mb-6 flex flex-wrap gap-3 justify-between">
+                    <div className="flex space-x-2">
+                        <button
+                            onClick={() => setSelectedFilter('all')}
+                            className={`px-4 py-2 rounded-lg text-sm ${selectedFilter === 'all'
+                                ? 'bg-purple-600 text-white'
+                                : 'bg-gray-700 text-gray-300'
+                                }`}
+                        >
+                            Semua
+                        </button>
+                        <button
+                            onClick={() => setSelectedFilter('valid')}
+                            className={`px-4 py-2 rounded-lg text-sm ${selectedFilter === 'valid'
+                                ? 'bg-green-600 text-white'
+                                : 'bg-gray-700 text-gray-300'
+                                }`}
+                        >
+                            Valid
+                        </button>
+                        <button
+                            onClick={() => setSelectedFilter('invalid')}
+                            className={`px-4 py-2 rounded-lg text-sm ${selectedFilter === 'invalid'
+                                ? 'bg-red-600 text-white'
+                                : 'bg-gray-700 text-gray-300'
+                                }`}
+                        >
+                            Tidak Valid
+                        </button>
+                        <button
+                            onClick={() => setSelectedFilter('verified')}
+                            className={`px-4 py-2 rounded-lg text-sm ${selectedFilter === 'verified'
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-gray-700 text-gray-300'
+                                }`}
+                        >
+                            Terverifikasi
+                        </button>
+                    </div>
+
+                    <div className="flex space-x-2">
+                        <input
+                            type="text"
+                            placeholder="Cari tiket..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:border-purple-500 focus:outline-none"
+                        />
+
+                        <select
+                            value={sortOrder}
+                            onChange={(e) => setSortOrder(e.target.value)}
+                            className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:border-purple-500 focus:outline-none"
+                        >
+                            <option value="newest">Terbaru</option>
+                            <option value="oldest">Terlama</option>
+                        </select>
+
+                        <button
+                            onClick={() => loadTickets()}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                            disabled={loading}
+                        >
+                            {loading ? <LoadingSpinner size="sm" /> : 'Refresh'}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Analytics Summary */}
+                {tickets.length > 0 && (
+                    <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div className="bg-gray-800 rounded-lg p-4 border border-purple-700/30">
+                            <h3 className="text-gray-400 text-sm mb-1">Total Tiket</h3>
+                            <p className="text-2xl font-bold text-white">{tickets.length}</p>
+                        </div>
+                        <div className="bg-gray-800 rounded-lg p-4 border border-green-700/30">
+                            <h3 className="text-gray-400 text-sm mb-1">Tiket Valid</h3>
+                            <p className="text-2xl font-bold text-green-400">
+                                {tickets.filter(t =>
+                                    ticketAnalytics[t._id]?.isValid && concerts[t.concertId] !== null
+                                ).length}
+                            </p>
+                        </div>
+                        <div className="bg-gray-800 rounded-lg p-4 border border-red-700/30">
+                            <h3 className="text-gray-400 text-sm mb-1">Tiket Tidak Valid</h3>
+                            <p className="text-2xl font-bold text-red-400">
+                                {tickets.filter(t =>
+                                    !ticketAnalytics[t._id]?.isValid || concerts[t.concertId] === null
+                                ).length}
+                            </p>
+                        </div>
+                        <div className="bg-gray-800 rounded-lg p-4 border border-blue-700/30">
+                            <h3 className="text-gray-400 text-sm mb-1">Terverifikasi</h3>
+                            <p className="text-2xl font-bold text-blue-400">
+                                {tickets.filter(t => t.isVerified).length}
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Tickets List dengan AnimatePresence untuk animasi saat item dihapus */}
+                {filteredTickets.length === 0 ? (
+                    <div className="bg-gray-800 rounded-lg p-8 text-center">
+                        <h2 className="text-2xl text-white mb-4">Tidak Ada Tiket</h2>
+                        <p className="text-gray-400 mb-6">
+                            {tickets.length > 0
+                                ? 'Tidak ada tiket yang cocok dengan filter saat ini'
+                                : 'Anda belum memiliki tiket'}
+                        </p>
+                        <Link
+                            to="/mint-ticket"
+                            className="px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all duration-300"
+                        >
+                            Beli Tiket
+                        </Link>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <AnimatePresence>
+                            {filteredTickets.map(ticket => renderTicketCard(ticket))}
+                        </AnimatePresence>
+                    </div>
+                )}
+
+                {/* Bottom Navigation */}
+                <div className="mt-12 flex justify-center">
+                    <Link
+                        to="/mint-ticket"
+                        className="px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 shadow-lg shadow-purple-500/10 hover:shadow-purple-500/20 transition-all duration-300"
+                    >
+                        Beli Tiket Konser Lainnya
+                    </Link>
+                </div>
             </div>
+
+            {/* Delete Modal */}
+            {renderDeleteModal()}
+
+            {/* Toast Notification */}
+            <AnimatePresence>
+                {showToast && renderToast()}
+            </AnimatePresence>
         </div>
     );
 };
