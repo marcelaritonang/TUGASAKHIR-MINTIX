@@ -1,8 +1,8 @@
-// app/services/AuthService.js - Dengan integrasi Solana dan dukungan Auto-refresh
+// src/services/AuthService.js - Dengan perbaikan integrasi Solana
 class AuthService {
     constructor() {
         this.baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
-        this.tokenKey = 'auth_token'; // Pastikan nama kunci konsisten
+        this.tokenKey = 'auth_token'; // Kunci konsisten untuk token
 
         // Tambahkan event untuk notifikasi perubahan status auth
         this.authChangeListeners = [];
@@ -12,6 +12,26 @@ class AuthService {
 
         // Catat status token masih valid atau tidak
         this.tokenValid = false;
+
+        // Cek login saat konstruktor
+        this.checkInitialAuth();
+    }
+
+    // Cek initial auth state saat aplikasi load
+    async checkInitialAuth() {
+        const token = this.getToken();
+        if (token) {
+            // Coba validasi token yang ada
+            try {
+                await this.validateToken();
+            } catch (err) {
+                console.error("Initial token validation failed:", err);
+                // Hapus token kalau invalid
+                if (err.status === 401 || err.status === 403) {
+                    this.removeToken();
+                }
+            }
+        }
     }
 
     // Get token from localStorage
@@ -52,9 +72,10 @@ class AuthService {
             return true;
         }
 
-        // Jika kita tidak yakin, anggap valid sampai kita cek secara async
-        this.validateToken(); // Non-blocking, async validation
+        // Jika ragu tentang validitas, coba refresh jika perlu
+        this.refreshTokenIfNeeded();
 
+        // Untuk sementara, anggap valid sampai dibuktikan sebaliknya
         return !!token;
     }
 
@@ -67,14 +88,30 @@ class AuthService {
         }
 
         try {
-            // Coba buat admin-check untuk validasi token
-            const { isAdmin } = await this.checkAdminStatus();
+            // Gunakan timeout untuk mencegah operasi yang menggantung
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-            // Jika kita mendapatkan respons (bahkan jika bukan admin), token valid
+            const response = await fetch(`${this.baseUrl}/auth/validate`, {
+                headers: {
+                    'x-auth-token': token
+                },
+                signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                const error = new Error('Token validation failed');
+                error.status = response.status;
+                throw error;
+            }
+
+            // Jika response OK, token valid
             this.tokenValid = true;
             return true;
         } catch (error) {
-            console.error('Token validation failed:', error);
+            console.error('Token validation error:', error);
 
             // Jika error 401/403, token tidak valid
             if (error.status === 401 || error.status === 403) {
@@ -83,7 +120,13 @@ class AuthService {
                 return false;
             }
 
-            // Jika error lain (misalnya koneksi), anggap masih valid
+            // Jika timeout atau error jaringan, anggap token masih valid untuk sementara
+            if (error.name === 'AbortError') {
+                console.log('Token validation timed out, assuming valid');
+                return true;
+            }
+
+            // Error lain, anggap masih valid untuk menghindari logout yang tidak perlu
             return true;
         }
     }
@@ -113,20 +156,50 @@ class AuthService {
         });
     }
 
-    // Login dengan test endpoint - DIPERBARUI dengan notifikasi
-    async loginTest(walletAddress = '2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU') {
+    // Login dengan test endpoint - untuk pengembangan
+    async loginTest(walletAddress) {
         try {
             console.log('Attempting test login with wallet:', walletAddress);
 
+            // Set timeout untuk mencegah operasi yang menggantung
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+            // Dapatkan nonce untuk autentikasi
+            let nonce;
+            try {
+                const nonceResponse = await fetch(`${this.baseUrl}/auth/nonce`, {
+                    signal: controller.signal
+                });
+
+                if (!nonceResponse.ok) {
+                    throw new Error(`Failed to get nonce: ${nonceResponse.status}`);
+                }
+
+                const nonceData = await nonceResponse.json();
+                nonce = nonceData.nonce;
+            } catch (nonceError) {
+                console.error("Error getting nonce:", nonceError);
+                // Fallback jika nonce gagal
+                nonce = Math.random().toString(36).substring(2);
+            }
+
+            // Buat request login
             const response = await fetch(`${this.baseUrl}/auth/login-test`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ wallet_address: walletAddress })
+                body: JSON.stringify({
+                    wallet_address: walletAddress,
+                    nonce
+                }),
+                signal: controller.signal
             });
 
-            // Periksa content-type sebelum mencoba parse JSON
+            clearTimeout(timeoutId);
+
+            // Periksa content-type dan status response
             const contentType = response.headers.get('content-type');
             if (!response.ok) {
                 let errorMsg = `Login failed with status ${response.status}`;
@@ -151,84 +224,122 @@ class AuthService {
             console.log('Login successful, token received');
 
             // Simpan token - ini akan memanggil _notifyAuthChange
-            this.setToken(data.token);
-
-            // Simpan informasi wallet
-            if (data.user) {
-                localStorage.setItem('wallet_address', data.user.walletAddress || walletAddress);
-            } else {
-                localStorage.setItem('wallet_address', walletAddress);
-            }
-
-            return true;
-        } catch (error) {
-            console.error('Login test error:', error);
-            return false;
-        }
-    }
-
-    // Login dengan wallet signature - DIPERBARUI dengan notifikasi
-    async loginWithWallet(wallet) {
-        if (!wallet || !wallet.publicKey) {
-            throw new Error('Wallet not connected');
-        }
-
-        try {
-            console.log('Attempting login with wallet signature for address:', wallet.publicKey.toString());
-
-            // Get nonce from server
-            const nonceResponse = await fetch(`${this.baseUrl}/auth/nonce`);
-
-            if (!nonceResponse.ok) {
-                throw new Error(`Failed to get nonce: ${nonceResponse.status}`);
-            }
-
-            const { nonce } = await nonceResponse.json();
-
-            // Create message to sign
-            const message = `Sign this message to authenticate with your wallet: ${nonce}`;
-            const encodedMessage = new TextEncoder().encode(message);
-
-            // Sign message
-            const signature = await wallet.signMessage(encodedMessage);
-            const signatureBase58 = Buffer.from(signature).toString('base58');
-
-            console.log('Message signed, submitting to server');
-
-            // Send signature to server
-            const response = await fetch(`${this.baseUrl}/auth/login`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    wallet_address: wallet.publicKey.toString(),
-                    signature: signatureBase58,
-                    message
-                })
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.msg || `Login failed: ${response.status}`);
-            }
-
-            const data = await response.json();
-            console.log('Login successful with signature');
-
-            // Store token - ini akan memanggil _notifyAuthChange
             if (data.token) {
                 this.setToken(data.token);
 
-                // Juga simpan alamat wallet
-                localStorage.setItem('wallet_address', wallet.publicKey.toString());
+                // Simpan informasi wallet
+                if (data.user && data.user.walletAddress) {
+                    localStorage.setItem('wallet_address', data.user.walletAddress);
+                } else {
+                    localStorage.setItem('wallet_address', walletAddress);
+                }
 
                 return true;
             } else {
                 throw new Error('No token received from server');
             }
         } catch (error) {
+            console.error('Login test error:', error);
+
+            // Handle timeout khusus
+            if (error.name === 'AbortError') {
+                console.error('Login request timed out');
+            }
+
+            return false;
+        }
+    }
+
+    // Login dengan wallet sebenarnya
+    async loginWithWallet(wallet) {
+        if (!wallet || !wallet.publicKey) {
+            throw new Error('Wallet not connected');
+        }
+
+        try {
+            const walletAddress = wallet.publicKey.toString();
+            console.log('Attempting login with wallet:', walletAddress);
+
+            // Set timeout untuk request
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+            try {
+                // Get nonce from server
+                const nonceResponse = await fetch(`${this.baseUrl}/auth/nonce`, {
+                    signal: controller.signal
+                });
+
+                if (!nonceResponse.ok) {
+                    throw new Error(`Failed to get nonce: ${nonceResponse.status}`);
+                }
+
+                const { nonce } = await nonceResponse.json();
+
+                // Buat pesan dan sign
+                const message = `Sign this message to authenticate with Concert NFT Tickets: ${nonce}`;
+                const messageBuffer = new TextEncoder().encode(message);
+
+                let signature;
+                try {
+                    // Sign message with wallet
+                    signature = await wallet.signMessage(messageBuffer);
+                } catch (signError) {
+                    console.error('Error signing message:', signError);
+                    throw new Error('Failed to sign message with wallet. Please try again.');
+                }
+
+                // Convert signature to base58 or hex
+                let signatureStr;
+                if (typeof signature === 'string') {
+                    signatureStr = signature;
+                } else if (signature instanceof Uint8Array) {
+                    signatureStr = Buffer.from(signature).toString('base64');
+                } else {
+                    signatureStr = JSON.stringify(signature);
+                }
+
+                // Send login request with signature
+                const loginResponse = await fetch(`${this.baseUrl}/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        wallet_address: walletAddress,
+                        signature: signatureStr,
+                        message,
+                        nonce
+                    }),
+                    signal: controller.signal
+                });
+
+                if (!loginResponse.ok) {
+                    const errorData = await loginResponse.json().catch(() => ({}));
+                    throw new Error(errorData.msg || `Login failed: ${loginResponse.status}`);
+                }
+
+                const loginData = await loginResponse.json();
+
+                if (!loginData.token) {
+                    throw new Error('No token received from server');
+                }
+
+                // Store token dan informasi wallet
+                this.setToken(loginData.token);
+                localStorage.setItem('wallet_address', walletAddress);
+
+                return true;
+            } finally {
+                clearTimeout(timeoutId);
+            }
+        } catch (error) {
             console.error('Login with wallet error:', error);
+
+            if (error.name === 'AbortError') {
+                throw new Error('Login request timed out. Try again later.');
+            }
+
             throw error;
         }
     }
@@ -238,7 +349,67 @@ class AuthService {
         return localStorage.getItem('wallet_address');
     }
 
-    // Cek status admin - DIPERBARUI dengan penanganan error lebih baik
+    // Logout dari aplikasi
+    logout() {
+        this.removeToken();
+        localStorage.removeItem('wallet_address');
+        localStorage.removeItem('myTickets');
+        // Hapus cache lain yang mungkin disimpan
+        try {
+            // Bersihkan cache dari ApiService
+            if (window.ApiService && typeof window.ApiService.clearCache === 'function') {
+                window.ApiService.clearCache();
+            }
+        } catch (e) {
+            console.error('Error clearing API cache during logout:', e);
+        }
+    }
+
+    // Refresh token jika mendekati expired
+    async refreshTokenIfNeeded() {
+        const token = this.getToken();
+        if (!token) return false;
+
+        const lastLogin = this.lastSuccessfulLogin;
+        const now = Date.now();
+
+        // Jika token kita sudah 20+ jam (dari 24 jam), coba refresh
+        // Ini berasumsi token expired dalam 24 jam
+        if (lastLogin && now - lastLogin < 20 * 60 * 60 * 1000) {
+            // Token masih cukup baru, tidak perlu refresh
+            return true;
+        }
+
+        console.log("Token approaching expiry, attempting refresh...");
+
+        // Coba refresh dengan loginTest - tidak mengganggu pengalaman pengguna
+        const walletAddress = this.getWalletAddress();
+        if (walletAddress) {
+            const refreshSuccess = await this.loginTest(walletAddress);
+            if (refreshSuccess) {
+                console.log("Token refreshed successfully");
+                return true;
+            } else {
+                console.log("Token refresh failed, session may expire soon");
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    // Cek apakah user adalah admin
+    async isAdmin() {
+        try {
+            const { isAdmin } = await this.checkAdminStatus();
+            return isAdmin;
+        } catch (error) {
+            console.error('Error checking admin status:', error);
+            return false;
+        }
+    }
+
+    // Cek status admin
     async checkAdminStatus() {
         try {
             const token = this.getToken();
@@ -249,94 +420,49 @@ class AuthService {
             }
 
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
-            const response = await fetch(`${this.baseUrl}/auth/admin-check`, {
-                headers: {
-                    'x-auth-token': token
-                },
-                signal: controller.signal
-            });
+            try {
+                const response = await fetch(`${this.baseUrl}/auth/admin-check`, {
+                    headers: {
+                        'x-auth-token': token
+                    },
+                    signal: controller.signal
+                });
 
-            clearTimeout(timeout);
+                if (!response.ok) {
+                    if (response.status === 401 || response.status === 403) {
+                        // Token tidak valid lagi
+                        this.tokenValid = false;
 
-            // Periksa content-type
-            const contentType = response.headers.get('content-type');
-            if (!response.ok) {
-                console.log(`Admin check failed with status ${response.status}`);
+                        // Jika 401 (unauthenticated), hapus token
+                        if (response.status === 401) {
+                            this.removeToken();
+                        }
+                    }
 
-                if (contentType && contentType.includes('application/json')) {
-                    const errorData = await response.json();
-                    console.error('Admin check error detail:', errorData);
-                } else {
-                    // Log respons error jika bukan JSON
-                    const errorText = await response.text();
-                    console.error("Admin check response not JSON:", errorText);
+                    return { isAdmin: false };
                 }
 
-                if (response.status === 401 || response.status === 403) {
-                    // Token tidak valid lagi, invalidate
-                    this.tokenValid = false;
-                }
+                const data = await response.json();
 
-                return { isAdmin: false };
+                // Jika berhasil mendapat response, tandai token sebagai valid
+                this.tokenValid = true;
+
+                return { isAdmin: !!data.isAdmin };
+            } finally {
+                clearTimeout(timeoutId);
             }
-
-            if (!contentType || !contentType.includes('application/json')) {
-                console.error('Admin check: Server did not return JSON response');
-                return { isAdmin: false };
-            }
-
-            const data = await response.json();
-            console.log('Admin check result:', data);
-
-            // Jika berhasil, token valid
-            this.tokenValid = true;
-
-            return { isAdmin: !!data.isAdmin };
         } catch (error) {
             console.error('Admin check error:', error);
 
             // Jika error adalah abort (timeout), jangan invalidate token
             if (error.name === 'AbortError') {
                 console.log('Admin check timeout');
-                return { isAdmin: false };
             }
 
             return { isAdmin: false };
         }
-    }
-
-    // Logout dari aplikasi - DIPERBARUI dengan notifikasi
-    logout() {
-        this.removeToken();
-        localStorage.removeItem('wallet_address');
-        localStorage.removeItem('myTickets');
-        // Hapus data lain yang mungkin disimpan
-    }
-
-    // Refresh token jika masih valid tapi mendekati expired
-    async refreshTokenIfNeeded() {
-        const token = this.getToken();
-        if (!token) return false;
-
-        const lastLogin = this.lastSuccessfulLogin;
-        const now = Date.now();
-
-        // Jika login terakhir kurang dari 22 jam yang lalu, tidak perlu refresh
-        // Ini berasumsi token expired dalam 24 jam
-        if (lastLogin && now - lastLogin < 22 * 60 * 60 * 1000) {
-            return true;
-        }
-
-        // Coba refresh dengan login-test
-        console.log("Token approaching expiry, refreshing...");
-        const walletAddress = this.getWalletAddress();
-        if (walletAddress) {
-            return await this.loginTest(walletAddress);
-        }
-
-        return false;
     }
 }
 

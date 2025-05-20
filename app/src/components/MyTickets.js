@@ -1,746 +1,754 @@
-// src/components/MyTickets.js
-import React, { useState, useEffect, useRef } from 'react';
+// src/components/MyTickets.js - Versi lengkap dengan fitur jual tiket dan info minting time
+import React, { useState, useEffect } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { useNavigate, Link } from 'react-router-dom';
-import { Connection, PublicKey, clusterApiUrl } from '@solana/web3.js';
-import { motion, AnimatePresence } from 'framer-motion';
-import { QRCodeSVG } from 'qrcode.react';
 
-// Services
+// Import services
 import ApiService from '../services/ApiService';
 import AuthService from '../services/AuthService';
-import blockchainService from '../services/blockchain';
 import { useConcerts } from '../context/ConcertContext';
 
-// Components
+// Import components
 import LoadingSpinner from './common/LoadingSpinner';
 
-// Helper untuk format waktu
+// Helper functions
 const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
     const date = new Date(dateString);
-
-    const options = {
+    return date.toLocaleDateString('en-US', {
         day: '2-digit',
         month: 'short',
         year: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
-        second: '2-digit',
         hour12: false
-    };
-
-    return date.toLocaleDateString('id-ID', options);
+    });
 };
 
-// Helper untuk memformat alamat wallet
 const formatAddress = (address, start = 6, end = 4) => {
     if (!address) return 'N/A';
     return `${address.slice(0, start)}...${address.slice(-end)}`;
 };
 
+// Simplified Ticket Card Component with Minting Time
+const TicketCard = ({ ticket, onViewDetails, refreshTickets }) => {
+    const [loading, setLoading] = useState(false);
+    const [processingAction, setProcessingAction] = useState(false);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [showSellForm, setShowSellForm] = useState(false);
+    const [listingPrice, setListingPrice] = useState('');
+    const [processingListing, setProcessingListing] = useState(false);
+    const [showMintingTime, setShowMintingTime] = useState(false);
+
+    // Menambahkan state untuk menampilkan pesan sukses
+    const [successMessage, setSuccessMessage] = useState('');
+    const [showSuccessMessage, setShowSuccessMessage] = useState(false);
+
+    // Improved blockchain status check - consistent with TicketDetail.js
+    const getBlockchainStatus = () => {
+        // Check for direct verification flag first
+        if (ticket.isVerified || (ticket.blockchainStatus && ticket.blockchainStatus.verified)) {
+            return 'verified';
+        }
+
+        // Check for valid transaction signature format
+        if (ticket.transactionSignature &&
+            !ticket.transactionSignature.startsWith('dummy_') &&
+            !ticket.transactionSignature.startsWith('added_') &&
+            !ticket.transactionSignature.startsWith('error_')) {
+            return 'valid';
+        }
+
+        return 'invalid';
+    };
+
+    // Cek apakah tiket dapat dijual
+    const canSellTicket = () => {
+        // Tiket dengan transaksi valid atau terverifikasi dapat dijual
+        // Ini memastikan semua pengguna dengan tiket yang valid dapat menjualnya
+        return blockchainStatus === 'verified' || blockchainStatus === 'valid';
+    };
+
+    // Mendapatkan data performa minting jika ada
+    const getMintingPerformance = () => {
+        try {
+            // Cek Performance data dari localStorage
+            const performanceData = localStorage.getItem('mint_performance_metrics');
+            if (!performanceData) return null;
+
+            const perfMetrics = JSON.parse(performanceData);
+            if (!Array.isArray(perfMetrics) || perfMetrics.length === 0) return null;
+
+            // Cari data yang sesuai dengan tiket ini berdasarkan ID, seatNumber atau createdAt yang berdekatan
+            // Prioritaskan match berdasarkan concertId dan seatNumber
+            const matchingMetrics = perfMetrics.filter(metric => {
+                // Cek match berdasarkan data tiket
+                if (metric.ticketData) {
+                    if (metric.ticketData.concertId === ticket.concertId &&
+                        metric.ticketData.seatNumber === ticket.seatNumber) {
+                        return true;
+                    }
+                }
+
+                // Cek match berdasarkan timestamp yang dekat dengan createdAt
+                if (metric.timestamp && ticket.createdAt) {
+                    const metricTime = new Date(metric.timestamp).getTime();
+                    const ticketTime = new Date(ticket.createdAt).getTime();
+
+                    // Jika timestamp dalam rentang 5 menit dari createdAt
+                    const fiveMinutes = 5 * 60 * 1000;
+                    return Math.abs(metricTime - ticketTime) < fiveMinutes;
+                }
+
+                return false;
+            });
+
+            if (matchingMetrics.length > 0) {
+                // Ambil data performa terbaru yang cocok
+                return matchingMetrics[matchingMetrics.length - 1];
+            }
+
+            return null;
+        } catch (err) {
+            console.error("Error getting minting performance:", err);
+            return null;
+        }
+    };
+
+    const mintingPerformance = getMintingPerformance();
+    const blockchainStatus = getBlockchainStatus();
+
+    // Fungsi untuk menampilkan pesan sukses sementara
+    const showTemporarySuccess = (message) => {
+        setSuccessMessage(message);
+        setShowSuccessMessage(true);
+        setTimeout(() => {
+            setShowSuccessMessage(false);
+        }, 5000); // Tampilkan pesan selama 5 detik
+    };
+
+    // Render komponen info minting time
+    const MintingTimeInfo = () => {
+        if (!mintingPerformance) return null;
+
+        return (
+            <div className="mt-3 bg-gray-700/30 rounded-lg p-3 overflow-hidden">
+                <div className="flex justify-between items-center mb-2">
+                    <h4 className="text-sm font-medium text-purple-400">Minting Performance</h4>
+                    <button
+                        onClick={() => setShowMintingTime(!showMintingTime)}
+                        className="text-xs text-indigo-400 hover:underline focus:outline-none"
+                    >
+                        {showMintingTime ? 'Hide Details' : 'Show Details'}
+                    </button>
+                </div>
+
+                <div className="flex justify-between text-sm">
+                    <span className="text-gray-300">Total Minting Time:</span>
+                    <span className="text-white font-medium">{mintingPerformance.totalTime.toFixed(2)}s</span>
+                </div>
+
+                <div className="flex justify-between text-sm">
+                    <span className="text-gray-300">Gas Fee:</span>
+                    <span className="text-white">0.00008 SOL</span>
+                </div>
+
+                {showMintingTime && (
+                    <div className="mt-2 space-y-1 border-t border-gray-600 pt-2">
+                        <div className="text-xs text-gray-400 mb-1">Step by Step Timing:</div>
+
+                        {mintingPerformance.steps.map((step, index) => (
+                            <div key={index} className="grid grid-cols-12 gap-1 text-xs">
+                                <div className="col-span-8 text-gray-400 truncate">{step.name}</div>
+                                <div className="col-span-2 text-right text-gray-400">{step.time.toFixed(2)}s</div>
+                                <div className="col-span-2 text-right text-gray-500">({step.percentage?.toFixed(1) || 0}%)</div>
+                            </div>
+                        ))}
+
+                        <div className="text-right text-xs text-gray-500 mt-1">
+                            Minted on {new Date(mintingPerformance.timestamp).toLocaleString()}
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    // Simplified handlers
+    const handleDeleteTicket = async () => {
+        try {
+            setProcessingAction(true);
+            const response = await ApiService.deleteTicket(ticket._id);
+            if (response.success) {
+                showTemporarySuccess('Tiket berhasil dihapus');
+                if (refreshTickets) await refreshTickets();
+            } else {
+                throw new Error(response.msg || 'Gagal menghapus tiket');
+            }
+        } catch (err) {
+            console.error('Error menghapus tiket:', err);
+            alert('Error: ' + (err.message || 'Gagal menghapus tiket'));
+        } finally {
+            setProcessingAction(false);
+            setShowDeleteConfirm(false);
+        }
+    };
+
+    const handleCancelListing = async () => {
+        try {
+            setProcessingAction(true);
+            const response = await ApiService.cancelTicketListing(ticket._id);
+            if (response.success) {
+                showTemporarySuccess('Pembatalan listing berhasil');
+                if (refreshTickets) await refreshTickets();
+            } else {
+                throw new Error(response.msg || 'Gagal membatalkan listing');
+            }
+        } catch (err) {
+            console.error('Error membatalkan listing:', err);
+            alert('Error: ' + (err.message || 'Gagal membatalkan listing'));
+        } finally {
+            setProcessingAction(false);
+        }
+    };
+
+    const handleListTicket = async () => {
+        // Validate input price
+        if (!listingPrice || listingPrice.trim() === '') {
+            alert('Silakan masukkan harga yang valid');
+            return;
+        }
+
+        // Convert to number and validate
+        const price = parseFloat(listingPrice);
+        if (isNaN(price) || price <= 0) {
+            alert('Harga harus berupa angka positif lebih dari 0');
+            return;
+        }
+
+        try {
+            setProcessingListing(true);
+
+            // Log debug info
+            console.log(`Mendaftarkan tiket ${ticket._id} untuk dijual dengan harga ${price} SOL`);
+
+            // Validasi ticket ID
+            if (!ticket._id) {
+                throw new Error('ID tiket tidak valid');
+            }
+
+            // Make sure we're passing the correct parameters to the API service
+            const response = await ApiService.listTicketForSale(ticket._id, price);
+
+            // Log response for debugging
+            console.log("List ticket response:", response);
+
+            if (response.success) {
+                showTemporarySuccess(`Tiket berhasil didaftarkan untuk dijual dengan harga ${price} SOL`);
+                if (refreshTickets) await refreshTickets();
+            } else {
+                throw new Error(response.msg || 'Gagal mendaftarkan tiket');
+            }
+        } catch (err) {
+            console.error('Error mendaftarkan tiket:', err);
+            alert('Error: ' + (err.message || 'Gagal mendaftarkan tiket'));
+        } finally {
+            setProcessingListing(false);
+            setShowSellForm(false);
+        }
+    };
+
+    // Simplified UI
+    return (
+        <div className="bg-gray-800 rounded-lg border border-gray-700 hover:border-purple-500 transition-colors p-4">
+            {/* Success message notification */}
+            {showSuccessMessage && (
+                <div className="bg-green-500/10 border border-green-500 rounded-lg p-3 mb-4">
+                    <p className="text-green-500 text-sm">{successMessage}</p>
+                </div>
+            )}
+
+            {/* Header with concert name */}
+            <div className="flex justify-between items-start mb-3">
+                <div>
+                    <h3 className="text-white font-medium text-lg">
+                        {ticket.concertExists
+                            ? (ticket.concertName || 'Konser')
+                            : (
+                                <span className="flex items-center">
+                                    <span className="text-orange-400 mr-1">Konser Tidak Tersedia</span>
+                                    <span className="text-xs bg-orange-900/30 text-orange-400 border border-orange-700 rounded px-1">
+                                        Dihapus
+                                    </span>
+                                </span>
+                            )
+                        }
+                    </h3>
+                    <p className="text-gray-400">
+                        {ticket.concertExists
+                            ? (ticket.concertVenue || 'Lokasi Tidak Diketahui')
+                            : 'Konser telah dihapus'
+                        }
+                    </p>
+                    {ticket.concertDate && ticket.concertExists && (
+                        <p className="text-gray-400 text-sm">{formatDate(ticket.concertDate)}</p>
+                    )}
+                </div>
+                <div className={`px-2 py-1 rounded text-xs border ${blockchainStatus === 'verified' ? 'bg-green-900/30 text-green-400 border-green-700' :
+                    blockchainStatus === 'valid' ? 'bg-blue-900/30 text-blue-400 border-blue-700' :
+                        'bg-red-900/30 text-red-400 border-red-700'
+                    }`}>
+                    {blockchainStatus === 'verified' ? 'Terverifikasi' :
+                        blockchainStatus === 'valid' ? 'TX Valid' :
+                            'TX Invalid'}
+                </div>
+            </div>
+
+            {/* Ticket details */}
+            <div className="flex justify-between items-center mb-3">
+                <div>
+                    <p className="text-gray-300 text-sm">Seksi</p>
+                    <p className="text-white">{ticket.sectionName || 'Reguler'}</p>
+                </div>
+                <div>
+                    <p className="text-gray-300 text-sm">Kursi</p>
+                    <p className="text-white">{ticket.seatNumber || 'Umum'}</p>
+                </div>
+                <div>
+                    <p className="text-gray-300 text-sm">Status</p>
+                    <p className="text-white capitalize">{ticket.status || 'Aktif'}</p>
+                </div>
+            </div>
+
+            {/* Basic ticket info with blockchain */}
+            <div className="bg-gray-700/30 p-3 rounded-lg mb-3">
+                <div className="flex justify-between text-sm">
+                    <span className="text-gray-300">Pemilik</span>
+                    <span className="text-white font-mono">{formatAddress(ticket.owner)}</span>
+                </div>
+                <div className="flex justify-between text-sm mt-1">
+                    <span className="text-gray-300">Dibuat</span>
+                    <span className="text-white">{formatDate(ticket.createdAt)}</span>
+                </div>
+                {ticket.transactionSignature && (
+                    <div className="flex justify-between text-sm mt-1">
+                        <span className="text-gray-300">Transaksi</span>
+                        <span className={`text-sm ${blockchainStatus === 'verified' || blockchainStatus === 'valid' ? 'text-green-400' : 'text-red-400'}`}>
+                            {ticket.transactionSignature.startsWith('dummy_') ||
+                                ticket.transactionSignature.startsWith('added_') ||
+                                ticket.transactionSignature.startsWith('error_') ? (
+                                'Invalid/Test'
+                            ) : (
+                                <a href={`https://explorer.solana.com/tx/${ticket.transactionSignature}?cluster=testnet`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="hover:underline"
+                                >
+                                    {formatAddress(ticket.transactionSignature, 8, 8)}
+                                </a>
+                            )}
+                        </span>
+                    </div>
+                )}
+
+                {/* Blockchain status - simplified display */}
+                <div className="flex justify-between text-sm mt-1">
+                    <span className="text-gray-300">Status Blockchain</span>
+                    <span className={`text-sm font-medium ${blockchainStatus === 'verified' ? 'text-green-400' :
+                        blockchainStatus === 'valid' ? 'text-blue-400' :
+                            'text-red-400'
+                        }`}>
+                        {blockchainStatus === 'verified' ? '✅ Terverifikasi' :
+                            blockchainStatus === 'valid' ? '🔵 Valid' :
+                                '❌ Invalid'}
+                    </span>
+                </div>
+            </div>
+
+            {/* MINTING PERFORMANCE METRICS - BARU */}
+            {mintingPerformance && <MintingTimeInfo />}
+
+            {/* Listed for sale or action buttons */}
+            {ticket.isListed ? (
+                <div className="mt-3 bg-indigo-900/20 border border-indigo-600 rounded-lg p-3">
+                    <div className="flex justify-between items-center">
+                        <div>
+                            <h4 className="text-indigo-400 text-sm font-medium">Dijual di Marketplace</h4>
+                            <p className="text-white font-bold text-lg">{ticket.listingPrice} SOL</p>
+                            <p className="text-gray-400 text-xs">
+                                Terdaftar pada {formatDate(ticket.listingDate)}
+                            </p>
+                        </div>
+                        <button
+                            onClick={handleCancelListing}
+                            disabled={processingAction}
+                            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-md text-sm transition-colors disabled:opacity-50"
+                        >
+                            {processingAction ? 'Memproses...' : 'Batalkan Listing'}
+                        </button>
+                    </div>
+                </div>
+            ) : (
+                <div className="mt-3 flex flex-wrap gap-2">
+                    {/* Delete button */}
+                    <button
+                        onClick={() => setShowDeleteConfirm(true)}
+                        disabled={processingAction}
+                        className="px-4 bg-red-600 hover:bg-red-700 text-white py-2 rounded text-sm transition-colors disabled:opacity-50"
+                    >
+                        {processingAction ? '...' : 'Hapus'}
+                    </button>
+
+                    {/* Sell Ticket Button/Form */}
+                    {canSellTicket() && (
+                        !showSellForm ? (
+                            <button
+                                onClick={() => setShowSellForm(true)}
+                                disabled={processingAction}
+                                className="px-4 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded text-sm transition-colors disabled:opacity-50"
+                            >
+                                Jual di Marketplace
+                            </button>
+                        ) : (
+                            <div className="w-full mt-2 bg-indigo-900/20 border border-indigo-600 rounded-lg p-3">
+                                <h4 className="text-indigo-400 text-sm font-medium mb-2">Jual Tiket di Marketplace</h4>
+                                <p className="text-gray-300 text-xs mb-3">
+                                    Tiket Anda akan tampil di marketplace dan pembeli akan mengirim SOL langsung ke wallet Anda saat dibeli.
+                                </p>
+                                <div className="flex items-center gap-2">
+                                    <div className="flex-1">
+                                        <label className="block text-gray-300 text-xs mb-1">Harga Jual (SOL)</label>
+                                        <input
+                                            type="number"
+                                            value={listingPrice}
+                                            onChange={(e) => {
+                                                // Pastikan nilai yang dimasukkan adalah angka valid
+                                                const value = e.target.value;
+                                                // Hanya izinkan angka positif
+                                                if (value === '' || (!isNaN(parseFloat(value)) && parseFloat(value) >= 0)) {
+                                                    setListingPrice(value);
+                                                }
+                                            }}
+                                            onBlur={(e) => {
+                                                // Format angka ketika selesai mengedit
+                                                const value = e.target.value;
+                                                if (value !== '' && !isNaN(parseFloat(value))) {
+                                                    // Format dengan maksimal 6 angka desimal
+                                                    setListingPrice(parseFloat(value).toFixed(6));
+                                                }
+                                            }}
+                                            placeholder="Masukkan harga dalam SOL"
+                                            step="0.01"
+                                            min="0.01"
+                                            className="bg-gray-700 text-white p-2 rounded w-full"
+                                            required
+                                        />
+                                        {listingPrice && (parseFloat(listingPrice) <= 0 || isNaN(parseFloat(listingPrice))) && (
+                                            <p className="text-red-400 text-xs mt-1">Harga harus lebih dari 0</p>
+                                        )}
+                                    </div>
+                                    <div className="flex gap-2 self-end">
+                                        <button
+                                            onClick={handleListTicket}
+                                            disabled={processingListing || !listingPrice}
+                                            className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm transition-colors disabled:opacity-50"
+                                        >
+                                            {processingListing ? 'Mendaftarkan...' : 'Jual Tiket'}
+                                        </button>
+                                        <button
+                                            onClick={() => setShowSellForm(false)}
+                                            disabled={processingListing}
+                                            className="px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md text-sm transition-colors disabled:opacity-50"
+                                        >
+                                            Batal
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )
+                    )}
+                </div>
+            )}
+
+            {/* View details button */}
+            <button
+                onClick={() => onViewDetails(ticket._id)}
+                className="w-full mt-3 bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded text-sm transition-colors"
+            >
+                Lihat Detail & Riwayat
+            </button>
+
+            {/* Delete confirmation modal */}
+            {showDeleteConfirm && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+                    <div className="bg-gray-800 p-6 rounded-lg w-full max-w-md border border-gray-700">
+                        <h3 className="text-lg text-white font-medium mb-4">Konfirmasi Penghapusan</h3>
+                        <p className="text-gray-300 mb-4">
+                            Apakah Anda yakin ingin menghapus tiket ini? Tindakan ini tidak dapat dibatalkan.
+                        </p>
+                        {!ticket.concertExists && (
+                            <p className="text-orange-400 text-sm mb-4">
+                                Catatan: Tiket ini untuk konser yang telah dihapus.
+                            </p>
+                        )}
+                        <div className="flex justify-end space-x-3">
+                            <button
+                                onClick={() => setShowDeleteConfirm(false)}
+                                disabled={processingAction}
+                                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors disabled:opacity-50"
+                            >
+                                Batal
+                            </button>
+                            <button
+                                onClick={handleDeleteTicket}
+                                disabled={processingAction}
+                                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
+                            >
+                                {processingAction ? 'Menghapus...' : 'Hapus'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// Main MyTickets component - improved
 const MyTickets = () => {
     const wallet = useWallet();
     const navigate = useNavigate();
-    const { loadMyTickets: contextLoadMyTickets } = useConcerts();
+    const { loadMyTickets } = useConcerts();
 
-    // State
     const [tickets, setTickets] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [expandedTicket, setExpandedTicket] = useState(null);
-    const [transactionDetails, setTransactionDetails] = useState({});
-    const [concerts, setConcerts] = useState({});
-    const [ticketAnalytics, setTicketAnalytics] = useState({});
-    const [isAuthenticated, setIsAuthenticated] = useState(false);
-    const [selectedFilter, setSelectedFilter] = useState('all');
-    const [sortOrder, setSortOrder] = useState('newest');
-    const [searchTerm, setSearchTerm] = useState('');
-    const [refreshInterval, setRefreshInterval] = useState(null);
-    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-    const [ticketToDelete, setTicketToDelete] = useState(null);
-    const [deleteLoading, setDeleteLoading] = useState(false);
-    const [showToast, setShowToast] = useState(false);
-    const [toastMessage, setToastMessage] = useState('');
-    const [toastType, setToastType] = useState('success'); // 'success', 'error', 'info'
+    const [isAuthenticated, setIsAuthenticated] = useState(AuthService.isAuthenticated());
+    const [showDeletedConcerts, setShowDeletedConcerts] = useState(false); // Default to hiding deleted concerts
 
-    // Ref untuk mencegah multiple loading
-    const loadingRef = useRef(false);
-
-    // Setup connection
-    const connection = new Connection(
-        process.env.REACT_APP_SOLANA_RPC_URL || clusterApiUrl('devnet'),
-        'confirmed'
-    );
-
-    // Otentikasi dan memuat tiket
+    // Authentication check
     useEffect(() => {
-        const init = async () => {
-            if (wallet.connected && wallet.publicKey) {
-                try {
-                    if (!AuthService.isAuthenticated()) {
-                        console.log("Attempting auto-login");
-                        const success = await AuthService.loginTest(wallet.publicKey.toString());
-                        setIsAuthenticated(success);
-                    } else {
-                        setIsAuthenticated(true);
-                    }
+        const checkAuth = async () => {
+            const token = localStorage.getItem('auth_token');
+            if (!token) {
+                setIsAuthenticated(false);
+                setLoading(false);
+                return;
+            }
 
-                    await loadTickets();
-
-                    // Setup auto-refresh interval
-                    setupAutoRefresh();
-                } catch (err) {
-                    console.error("Error during authentication:", err);
+            try {
+                const isValid = await AuthService.validateToken();
+                setIsAuthenticated(isValid);
+                if (!isValid) {
+                    console.log("Auth token invalid");
                     setLoading(false);
                 }
-            } else {
+            } catch (err) {
+                console.error("Error validating token:", err);
+                setIsAuthenticated(false);
                 setLoading(false);
             }
         };
 
-        init();
+        checkAuth();
+    }, [wallet]);
 
-        // Cleanup interval on unmount
-        return () => {
-            if (refreshInterval) {
-                clearInterval(refreshInterval);
+    // Load tickets - improved with concert existence check
+    useEffect(() => {
+        const loadTickets = async () => {
+            if (!isAuthenticated) {
+                setLoading(false);
+                return;
+            }
+
+            try {
+                setLoading(true);
+                setError('');
+                console.log('Loading tickets...');
+
+                // Get ALL tickets (including tickets for deleted concerts)
+                const userTickets = await ApiService.getMyTickets(false);
+
+                if (Array.isArray(userTickets)) {
+                    console.log(`Got ${userTickets.length} tickets from API`);
+
+                    // Process tickets in smaller batches to avoid overwhelming API
+                    const processedTickets = [];
+                    const BATCH_SIZE = 5;
+
+                    // Process tickets in batches
+                    for (let i = 0; i < userTickets.length; i += BATCH_SIZE) {
+                        const batch = userTickets.slice(i, i + BATCH_SIZE);
+                        const batchPromises = batch.map(async (ticket) => {
+                            try {
+                                // Check if concert exists
+                                if (ticket.concertId) {
+                                    const concert = await ApiService.getConcert(ticket.concertId);
+                                    // Add concertExists flag and other concert details
+                                    return {
+                                        ...ticket,
+                                        concertExists: !!concert,
+                                        concertName: concert?.name || ticket.concertName || 'Konser Tidak Diketahui',
+                                        concertVenue: concert?.venue || ticket.concertVenue || 'Lokasi Tidak Diketahui',
+                                        concertDate: concert?.date || ticket.concertDate
+                                    };
+                                }
+                                return { ...ticket, concertExists: false };
+                            } catch (err) {
+                                console.log(`Error checking concert for ticket ${ticket._id}:`, err.message);
+                                return { ...ticket, concertExists: false };
+                            }
+                        });
+
+                        const batchResults = await Promise.all(batchPromises);
+                        processedTickets.push(...batchResults);
+
+                        // Small delay between batches to prevent rate limiting
+                        if (i + BATCH_SIZE < userTickets.length) {
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        }
+                    }
+
+                    console.log(`Processed ${processedTickets.length} tickets with concert info`);
+                    setTickets(processedTickets);
+
+                    // Store in localStorage as backup
+                    localStorage.setItem('myTickets', JSON.stringify(processedTickets));
+                } else {
+                    throw new Error("Invalid response format from API");
+                }
+            } catch (err) {
+                console.error("Error loading tickets:", err);
+                setError('Gagal memuat tiket. Silakan coba lagi nanti.');
+
+                // Try to get from localStorage as fallback
+                try {
+                    const cachedTickets = JSON.parse(localStorage.getItem('myTickets') || '[]');
+                    if (cachedTickets.length > 0) {
+                        console.log(`Using ${cachedTickets.length} cached tickets`);
+                        setTickets(cachedTickets);
+                    }
+                } catch (cacheError) {
+                    console.error("Error loading cached tickets:", cacheError);
+                }
+            } finally {
+                setLoading(false);
             }
         };
-    }, [wallet.connected, wallet.publicKey]);
 
-    // Setup auto-refresh
-    const setupAutoRefresh = () => {
-        // Clear any existing interval
-        if (refreshInterval) {
-            clearInterval(refreshInterval);
+        if (isAuthenticated) {
+            loadTickets();
         }
+    }, [isAuthenticated]);
 
-        // Create new interval for auto refresh every 30 seconds
-        const interval = setInterval(() => {
-            if (!loadingRef.current) {
-                console.log("Auto-refreshing tickets...");
-                loadTickets(true); // silent refresh
-            }
-        }, 30000);
-
-        setRefreshInterval(interval);
+    // Navigate to ticket details
+    const handleViewDetails = (ticketId) => {
+        navigate(`/ticket/${ticketId}`);
     };
 
-    // Memuat tiket
-    const loadTickets = async (silent = false) => {
-        // Prevent multiple simultaneous loadings
-        if (loadingRef.current) return;
-
-        loadingRef.current = true;
-        if (!silent) setLoading(true);
-
-        try {
-            setError('');
-
-            const userTickets = await ApiService.getMyTickets();
-            console.log("User tickets:", userTickets);
-
-            if (Array.isArray(userTickets) && userTickets.length > 0) {
-                // Dapatkan data konser terkait untuk setiap tiket
-                const concertIds = [...new Set(userTickets.map(ticket => ticket.concertId))];
-                const concertDetails = {};
-
-                await Promise.all(concertIds.map(async (id) => {
-                    try {
-                        const concert = await ApiService.getConcert(id);
-                        concertDetails[id] = concert;
-                    } catch (err) {
-                        console.error(`Error fetching concert ${id}:`, err);
-                        // Jika konser tidak ditemukan, tetap buat entri kosong
-                        concertDetails[id] = null;
-                    }
-                }));
-
-                setConcerts(concertDetails);
-
-                // Ambil detail transaksi untuk setiap tiket
-                const txDetails = {};
-                const analytics = {};
-
-                await Promise.all(userTickets.map(async (ticket) => {
-                    if (ticket.transactionSignature) {
-                        try {
-                            // Dapatkan data transaksi
-                            const txData = await connection.getTransaction(ticket.transactionSignature);
-
-                            if (txData) {
-                                const blockTime = txData.blockTime ? new Date(txData.blockTime * 1000) : null;
-                                const slot = txData.slot;
-                                const confirmations = txData.meta?.confirmations || 0;
-                                const fee = txData.meta?.fee || 0;
-
-                                // Hitung TPS berdasarkan data transaksi
-                                let tps = 'N/A';
-                                if (txData.meta && txData.meta.txProcessingTime) {
-                                    tps = (1000 / txData.meta.txProcessingTime).toFixed(2);
-                                } else {
-                                    // Estimasi TPS jika tidak tersedia langsung
-                                    const perfSamples = await connection.getRecentPerformanceSamples(1);
-                                    if (perfSamples && perfSamples.length > 0) {
-                                        tps = perfSamples[0].numTransactions / perfSamples[0].samplePeriodSecs;
-                                        tps = tps.toFixed(2);
-                                    }
-                                }
-
-                                txDetails[ticket._id] = {
-                                    signature: ticket.transactionSignature,
-                                    blockTime,
-                                    slot,
-                                    confirmations,
-                                    fee,
-                                    tps
-                                };
-
-                                // Generate analytics
-                                analytics[ticket._id] = {
-                                    mintTime: blockTime,
-                                    tps,
-                                    fee,
-                                    isValid: true,
-                                    isMintedOnChain: true
-                                };
-                            } else {
-                                // Jika transaksi tidak ditemukan di blockchain
-                                txDetails[ticket._id] = {
-                                    signature: ticket.transactionSignature,
-                                    error: 'Transaction not found on blockchain'
-                                };
-
-                                analytics[ticket._id] = {
-                                    isValid: false,
-                                    isMintedOnChain: false,
-                                    error: 'Transaction not found'
-                                };
-                            }
-                        } catch (err) {
-                            console.error(`Error fetching transaction ${ticket.transactionSignature}:`, err);
-                            txDetails[ticket._id] = {
-                                signature: ticket.transactionSignature,
-                                error: err.message
-                            };
-
-                            analytics[ticket._id] = {
-                                isValid: false,
-                                isMintedOnChain: false,
-                                error: err.message
-                            };
-                        }
-                    } else {
-                        // Tiket tanpa signature transaksi
-                        analytics[ticket._id] = {
-                            isValid: false,
-                            isMintedOnChain: false,
-                            error: 'No transaction signature'
-                        };
-                    }
-                }));
-
-                setTransactionDetails(txDetails);
-                setTicketAnalytics(analytics);
-                setTickets(userTickets);
-            } else {
-                setTickets([]);
-            }
-        } catch (err) {
-            console.error("Error loading tickets:", err);
-            if (!silent) setError('Gagal memuat tiket. Silakan coba lagi nanti.');
-        } finally {
-            if (!silent) setLoading(false);
-            loadingRef.current = false;
-        }
-    };
-
-    // Filter tiket berdasarkan status
-    const getFilteredTickets = () => {
-        let filtered = [...tickets];
-
-        // Filter berdasarkan jenis
-        if (selectedFilter === 'valid') {
-            filtered = filtered.filter(ticket =>
-                ticketAnalytics[ticket._id]?.isValid &&
-                concerts[ticket.concertId] !== null
-            );
-        } else if (selectedFilter === 'invalid') {
-            filtered = filtered.filter(ticket =>
-                !ticketAnalytics[ticket._id]?.isValid ||
-                concerts[ticket.concertId] === null
-            );
-        } else if (selectedFilter === 'verified') {
-            filtered = filtered.filter(ticket => ticket.isVerified);
-        }
-
-        // Filter berdasarkan pencarian
-        if (searchTerm) {
-            filtered = filtered.filter(ticket => {
-                const concertName = concerts[ticket.concertId]?.name?.toLowerCase() || '';
-                const seatNumber = ticket.seatNumber?.toLowerCase() || '';
-                const search = searchTerm.toLowerCase();
-                return concertName.includes(search) || seatNumber.includes(search);
-            });
-        }
-
-        // Urutkan tiket
-        filtered.sort((a, b) => {
-            const timeA = ticketAnalytics[a._id]?.mintTime || new Date(a.createdAt || 0);
-            const timeB = ticketAnalytics[b._id]?.mintTime || new Date(b.createdAt || 0);
-
-            return sortOrder === 'newest'
-                ? timeB - timeA
-                : timeA - timeB;
-        });
-
-        return filtered;
-    };
-
-    // Fungsi untuk memverifikasi tiket
-    const handleVerifyTicket = async (ticketId) => {
+    // Refresh tickets
+    const refreshTickets = async () => {
         try {
             setLoading(true);
-            const result = await ApiService.verifyTicket(ticketId);
+            console.log("Refreshing tickets...");
 
-            if (result.success) {
-                // Update tiket di state
-                setTickets(prev => prev.map(ticket => {
-                    if (ticket._id === ticketId) {
-                        return { ...ticket, isVerified: true, verifiedAt: new Date() };
+            // Get fresh tickets
+            const userTickets = await ApiService.getMyTickets(false);
+
+            if (Array.isArray(userTickets)) {
+                // Process ticket concert existence
+                const processedTickets = [];
+
+                for (const ticket of userTickets) {
+                    try {
+                        // Check if concert exists
+                        if (ticket.concertId) {
+                            const concert = await ApiService.getConcert(ticket.concertId);
+                            processedTickets.push({
+                                ...ticket,
+                                concertExists: !!concert,
+                                concertName: concert?.name || ticket.concertName || 'Konser Tidak Diketahui',
+                                concertVenue: concert?.venue || ticket.concertVenue || 'Lokasi Tidak Diketahui',
+                                concertDate: concert?.date || ticket.concertDate
+                            });
+                        } else {
+                            processedTickets.push({ ...ticket, concertExists: false });
+                        }
+                    } catch (err) {
+                        processedTickets.push({ ...ticket, concertExists: false });
                     }
-                    return ticket;
-                }));
+                }
 
-                // Update Context
-                contextLoadMyTickets();
-
-                showToastMessage('Tiket berhasil diverifikasi', 'success');
-            } else {
-                showToastMessage('Gagal memverifikasi tiket: ' + (result.msg || 'Unknown error'), 'error');
+                setTickets(processedTickets);
+                localStorage.setItem('myTickets', JSON.stringify(processedTickets));
+                console.log(`Refreshed ${processedTickets.length} tickets`);
             }
         } catch (err) {
-            console.error("Error verifying ticket:", err);
-            showToastMessage('Gagal memverifikasi tiket: ' + err.message, 'error');
+            console.error("Error refreshing tickets:", err);
+            alert("Error refreshing tickets: " + (err.message || "Unknown error"));
         } finally {
             setLoading(false);
         }
     };
 
-    // BARU: Fungsi untuk menampilkan toast message
-    const showToastMessage = (message, type = 'success') => {
-        setToastMessage(message);
-        setToastType(type);
-        setShowToast(true);
-
-        // Otomatis hide toast setelah 3 detik
-        setTimeout(() => {
-            setShowToast(false);
-        }, 3000);
-    };
-
-    // BARU: Fungsi untuk menghapus tiket
-    const handleDeleteTicket = async () => {
-        if (!ticketToDelete) return;
-
-        setDeleteLoading(true);
-
-        try {
-            // Panggil API untuk menghapus tiket
-            const response = await fetch(`${ApiService.baseUrl}/tickets/${ticketToDelete._id}`, {
-                method: 'DELETE',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-auth-token': AuthService.getToken()
-                }
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.msg || `Failed to delete ticket: ${response.status}`);
-            }
-
-            // Jika berhasil, update state
-            setTickets(prev => prev.filter(ticket => ticket._id !== ticketToDelete._id));
-            showToastMessage('Tiket berhasil dihapus', 'success');
-
-            // Update Context
-            contextLoadMyTickets();
-
-        } catch (error) {
-            console.error("Error deleting ticket:", error);
-            showToastMessage(`Gagal menghapus tiket: ${error.message}`, 'error');
-        } finally {
-            setDeleteLoading(false);
-            setIsDeleteModalOpen(false);
-            setTicketToDelete(null);
-        }
-    };
-
-    // BARU: Tampilkan konfirmasi hapus
-    const openDeleteModal = (ticket) => {
-        setTicketToDelete(ticket);
-        setIsDeleteModalOpen(true);
-    };
-
-    // Render QR Code untuk tiket
-    const renderQRCode = (ticket) => {
-        // Data yang dienkode ke dalam QR
-        const qrData = JSON.stringify({
-            id: ticket._id,
-            concertId: ticket.concertId,
-            seat: ticket.seatNumber,
-            owner: ticket.owner,
-            valid: ticketAnalytics[ticket._id]?.isValid,
-            signature: ticket.transactionSignature?.substring(0, 10)
-        });
-
-        return (
-            <div className="qr-container bg-white p-4 rounded-lg shadow-lg">
-                <QRCodeSVG
-                    value={qrData}
-                    size={150}
-                    level="H"
-                    includeMargin={true}
-                    imageSettings={{
-                        src: '/logo192.png',
-                        height: 30,
-                        width: 30,
-                        excavate: true
-                    }}
-                />
-            </div>
-        );
-    };
-
-    // Render detail transaksi blockchain
-    const renderBlockchainDetails = (ticket) => {
-        const txDetail = transactionDetails[ticket._id];
-
-        if (!txDetail) {
-            return (
-                <div className="bg-red-500/10 p-3 rounded-lg mt-2">
-                    <p className="text-red-400 text-sm">Data blockchain tidak tersedia</p>
-                </div>
-            );
+    // Filter tickets based on showDeletedConcerts setting
+    const filteredTickets = tickets.filter(ticket => {
+        // If showDeletedConcerts is true, show all tickets
+        if (showDeletedConcerts) {
+            return true;
         }
 
-        if (txDetail.error) {
-            return (
-                <div className="bg-red-500/10 p-3 rounded-lg mt-2">
-                    <p className="text-red-400 text-sm">Error: {txDetail.error}</p>
-                </div>
-            );
-        }
+        // If showDeletedConcerts is false, only show tickets with existing concerts
+        return ticket.concertExists;
+    });
 
-        return (
-            <div className="bg-gray-800/50 p-3 rounded-lg mt-2 border border-gray-700/70">
-                <h4 className="text-gray-300 font-medium text-sm mb-2">Detail Blockchain:</h4>
-                <div className="space-y-1 text-xs">
-                    <div className="flex justify-between">
-                        <span className="text-gray-400">Signature:</span>
-                        <a
-                            href={`https://explorer.solana.com/tx/${txDetail.signature}?cluster=devnet`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-purple-400 hover:text-purple-300 truncate max-w-[180px]"
-                        >
-                            {formatAddress(txDetail.signature, 10, 5)}
-                        </a>
-                    </div>
-                    <div className="flex justify-between">
-                        <span className="text-gray-400">Waktu Mint:</span>
-                        <span className="text-white">{txDetail.blockTime ? formatDate(txDetail.blockTime) : 'N/A'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span className="text-gray-400">TPS Saat Minting:</span>
-                        <span className="text-yellow-400 font-medium">{txDetail.tps || 'N/A'} TPS</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span className="text-gray-400">Fee:</span>
-                        <span className="text-white">{txDetail.fee / 1000000000} SOL</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span className="text-gray-400">Slot:</span>
-                        <span className="text-white">{txDetail.slot || 'N/A'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span className="text-gray-400">Konfirmasi:</span>
-                        <span className="text-white">{txDetail.confirmations || 'N/A'}</span>
-                    </div>
-                </div>
-            </div>
-        );
-    };
-
-    // Render card untuk tiket
-    const renderTicketCard = (ticket) => {
-        const concertDetail = concerts[ticket.concertId];
-        const analytics = ticketAnalytics[ticket._id];
-        const isExpanded = expandedTicket === ticket._id;
-        const isTicketValid = analytics?.isValid && concertDetail !== null;
-        const isConcertDeleted = concertDetail === null;
-
-        // Status badge style
-        const getBadgeStyle = () => {
-            if (isConcertDeleted) {
-                return 'bg-red-900/20 text-red-400 border-red-700';
-            }
-            if (!isTicketValid) {
-                return 'bg-orange-900/20 text-orange-400 border-orange-700';
-            }
-            if (ticket.isVerified) {
-                return 'bg-green-900/20 text-green-400 border-green-700';
-            }
-            return 'bg-yellow-900/20 text-yellow-400 border-yellow-700';
-        };
-
-        // Status text
-        const getStatusText = () => {
-            if (isConcertDeleted) {
-                return 'Konser Dihapus';
-            }
-            if (!isTicketValid) {
-                return 'Tidak Valid';
-            }
-            return ticket.isVerified ? 'Terverifikasi' : 'Belum Digunakan';
-        };
-
-        return (
-            <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.3 }}
-                className={`bg-gray-800 rounded-lg overflow-hidden shadow-lg border ${isTicketValid && !isConcertDeleted
-                    ? 'border-purple-700/30 hover:border-purple-500/50'
-                    : 'border-red-700/30 hover:border-red-500/50'
-                    } transition-all duration-300`}
-            >
-                {/* Header - Concert Info */}
-                <div className="p-4 bg-gradient-to-r from-purple-900/30 to-indigo-900/30">
-                    <div className="flex justify-between items-start">
-                        <div>
-                            <h3 className="text-white font-bold text-lg">
-                                {concertDetail ? concertDetail.name : 'Konser Dihapus'}
-                            </h3>
-                            <p className="text-gray-400 text-sm">
-                                {concertDetail ? concertDetail.venue : 'Lokasi tidak tersedia'}
-                            </p>
-                        </div>
-                        <div className={`px-3 py-1 rounded-full text-xs border ${getBadgeStyle()}`}>
-                            {getStatusText()}
-                        </div>
-                    </div>
-
-                    <div className="mt-2 text-sm">
-                        <p className="text-gray-300">
-                            Tanggal: {concertDetail
-                                ? formatDate(concertDetail.date)
-                                : 'Tidak tersedia'
-                            }
-                        </p>
-                    </div>
-                </div>
-
-                {/* Ticket Details */}
-                <div className="p-4">
-                    <div className="flex justify-between mb-4">
-                        <div>
-                            <p className="text-gray-400 text-sm mb-1">Tipe Tiket</p>
-                            <p className="text-white font-medium">{ticket.sectionName}</p>
-                        </div>
-                        <div>
-                            <p className="text-gray-400 text-sm mb-1">Kursi</p>
-                            <p className="text-white font-medium">{ticket.seatNumber || 'General'}</p>
-                        </div>
-                    </div>
-
-                    <div className="flex justify-between mb-2">
-                        <div>
-                            <p className="text-gray-400 text-sm mb-1">Pemilik</p>
-                            <p className="text-white font-mono text-sm truncate w-32">{formatAddress(ticket.owner)}</p>
-                        </div>
-                        <div>
-                            <p className="text-gray-400 text-sm mb-1">Dibuat</p>
-                            <p className="text-white text-sm">{formatDate(analytics?.mintTime || ticket.createdAt)}</p>
-                        </div>
-                    </div>
-
-                    {/* Expanded View */}
-                    {isExpanded && (
-                        <div className="mt-4 space-y-3">
-                            {/* QR Code and Transaction */}
-                            <div className="flex flex-wrap md:flex-nowrap gap-4 justify-between">
-                                {renderQRCode(ticket)}
-                                <div className="flex-1">
-                                    {renderBlockchainDetails(ticket)}
-                                </div>
-                            </div>
-
-                            {/* Actions */}
-                            <div className="flex gap-2 mt-3">
-                                {isTicketValid && !ticket.isVerified && (
-                                    <button
-                                        onClick={() => handleVerifyTicket(ticket._id)}
-                                        className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex-1"
-                                        disabled={loading}
-                                    >
-                                        {loading ? <LoadingSpinner /> : 'Verifikasi Tiket'}
-                                    </button>
-                                )}
-
-                                {/* BARU: Tombol hapus tiket */}
-                                {(isConcertDeleted || !isTicketValid) && (
-                                    <button
-                                        onClick={() => openDeleteModal(ticket)}
-                                        className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors flex-1"
-                                        disabled={loading}
-                                    >
-                                        {loading ? <LoadingSpinner /> : 'Hapus Tiket'}
-                                    </button>
-                                )}
-
-                                <a
-                                    href={`https://explorer.solana.com/tx/${ticket.transactionSignature}?cluster=devnet`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex-1 text-center"
-                                >
-                                    Lihat di Explorer
-                                </a>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Toggle Button */}
-                    <button
-                        onClick={() => setExpandedTicket(isExpanded ? null : ticket._id)}
-                        className="w-full mt-3 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors text-sm"
-                    >
-                        {isExpanded ? 'Sembunyikan Detail' : 'Lihat Detail'}
-                    </button>
-                </div>
-            </motion.div>
-        );
-    };
-
-    // Render modal konfirmasi hapus tiket
-    const renderDeleteModal = () => {
-        if (!isDeleteModalOpen || !ticketToDelete) return null;
-
-        const concertName = concerts[ticketToDelete.concertId]?.name || 'Konser Dihapus';
-
-        return (
-            <div className="fixed inset-0 flex items-center justify-center z-50 bg-black/70">
-                <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
-                    <h3 className="text-xl font-bold text-white mb-4">Konfirmasi Hapus Tiket</h3>
-                    <p className="text-gray-300 mb-6">
-                        Apakah Anda yakin ingin menghapus tiket untuk konser "{concertName}" dengan kursi {ticketToDelete.seatNumber}?
-                    </p>
-                    {concerts[ticketToDelete.concertId] === null && (
-                        <div className="bg-yellow-500/10 border border-yellow-500/50 rounded p-3 mb-4">
-                            <p className="text-yellow-400 text-sm">
-                                Konser untuk tiket ini telah dihapus. Menghapus tiket ini tidak akan mempengaruhi blockchain.
-                            </p>
-                        </div>
-                    )}
-                    <div className="flex justify-end space-x-3">
-                        <button
-                            onClick={() => {
-                                setIsDeleteModalOpen(false);
-                                setTicketToDelete(null);
-                            }}
-                            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors"
-                            disabled={deleteLoading}
-                        >
-                            Batal
-                        </button>
-                        <button
-                            onClick={handleDeleteTicket}
-                            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded transition-colors flex items-center"
-                            disabled={deleteLoading}
-                        >
-                            {deleteLoading ? (
-                                <>
-                                    <LoadingSpinner size="sm" />
-                                    <span className="ml-2">Menghapus...</span>
-                                </>
-                            ) : (
-                                'Hapus Tiket'
-                            )}
-                        </button>
-                    </div>
-                </div>
-            </div>
-        );
-    };
-
-    // Render toast notification
-    const renderToast = () => {
-        if (!showToast) return null;
-
-        const bgColor = toastType === 'success' ? 'bg-green-500' :
-            toastType === 'error' ? 'bg-red-500' :
-                'bg-blue-500';
-
-        return (
-            <div className="fixed bottom-4 right-4 z-50">
-                <motion.div
-                    initial={{ opacity: 0, y: 50 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 50 }}
-                    className={`${bgColor} text-white px-4 py-3 rounded-lg shadow-lg flex items-center`}
-                >
-                    {toastType === 'success' && (
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                    )}
-                    {toastType === 'error' && (
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                        </svg>
-                    )}
-                    {toastType === 'info' && (
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                        </svg>
-                    )}
-                    <span>{toastMessage}</span>
-                </motion.div>
-            </div>
-        );
-    };
-
-    // Render saat loading
-    if (loading && !tickets.length) {
+    // Loading state
+    if (loading) {
         return (
             <div className="min-h-screen bg-gray-900 pt-24 pb-16 px-4">
-                <div className="max-w-5xl mx-auto">
+                <div className="max-w-6xl mx-auto">
                     <div className="flex flex-col items-center justify-center mt-20">
                         <LoadingSpinner size="lg" />
-                        <p className="text-gray-300 mt-4">Memuat tiket...</p>
+                        <p className="text-gray-300 mt-4">Memuat tiket Anda...</p>
                     </div>
                 </div>
             </div>
         );
     }
 
-    // Render wallet not connected
-    if (!wallet.connected) {
+    // Not authenticated state
+    if (!isAuthenticated) {
         return (
             <div className="min-h-screen bg-gray-900 pt-24 pb-16 px-4">
-                <div className="max-w-5xl mx-auto">
-                    <h1 className="text-3xl font-bold text-white text-center mb-10">Tiket Saya</h1>
+                <div className="max-w-md mx-auto text-center">
+                    <div className="bg-gray-800 rounded-lg p-8">
+                        <h2 className="text-xl text-white mb-4">Hubungkan Dompet Anda</h2>
+                        <p className="text-gray-400 mb-6">
+                            Silakan hubungkan dompet Solana Anda untuk melihat tiket Anda
+                        </p>
+                        <WalletMultiButton className="bg-purple-600 hover:bg-purple-700 text-white" />
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
-                    <div className="bg-gray-800 rounded-lg p-8 text-center">
-                        <h2 className="text-2xl text-white mb-4">Hubungkan Wallet Anda</h2>
-                        <p className="text-gray-400 mb-6">Hubungkan wallet Solana Anda untuk melihat tiket</p>
-                        <div className="flex justify-center">
-                            <WalletMultiButton className="!bg-gradient-to-br !from-purple-600 !to-indigo-600 hover:!shadow-lg hover:!shadow-purple-500/20 transition duration-300" />
+    // Error state
+    if (error && tickets.length === 0) {
+        return (
+            <div className="min-h-screen bg-gray-900 pt-24 pb-16 px-4">
+                <div className="max-w-6xl mx-auto">
+                    <div className="bg-red-500/10 border border-red-500 rounded-lg p-4">
+                        <h3 className="text-red-400 font-medium mb-2">Error Memuat Tiket</h3>
+                        <p className="text-red-500">{error}</p>
+                        <div className="mt-4 flex gap-3">
+                            <button
+                                onClick={refreshTickets}
+                                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+                            >
+                                Coba Lagi
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -748,168 +756,115 @@ const MyTickets = () => {
         );
     }
 
-    const filteredTickets = getFilteredTickets();
+    // No tickets state
+    if (tickets.length === 0) {
+        return (
+            <div className="min-h-screen bg-gray-900 pt-24 pb-16 px-4">
+                <div className="max-w-md mx-auto text-center">
+                    <div className="bg-gray-800 rounded-lg p-8">
+                        <h2 className="text-xl text-white mb-4">Tidak Ada Tiket Ditemukan</h2>
+                        <p className="text-gray-400 mb-6">
+                            Anda belum membeli tiket. Mulai jelajahi konser!
+                        </p>
+                        <div className="flex gap-4 justify-center">
+                            <Link
+                                to="/mint-ticket"
+                                className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-6 rounded-lg transition-colors"
+                            >
+                                Beli Tiket
+                            </Link>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-gray-900 pt-24 pb-16 px-4">
-            {/* Background effects */}
-            <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
-                <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full bg-purple-600 filter blur-3xl"></div>
-                <div className="absolute bottom-1/4 right-1/4 w-96 h-96 rounded-full bg-indigo-600 filter blur-3xl"></div>
-            </div>
-
-            <div className="max-w-5xl mx-auto relative">
-                <h1 className="text-3xl font-bold text-white text-center mb-6">Tiket Saya</h1>
-
-                {error && (
-                    <div className="bg-red-500/10 border border-red-500 rounded-lg p-4 mb-6">
-                        <p className="text-red-500">{error}</p>
+            <div className="max-w-6xl mx-auto">
+                {/* Header */}
+                <div className="flex justify-between items-center mb-6">
+                    <div>
+                        <h1 className="text-2xl font-bold text-white">Tiket Saya</h1>
+                        <p className="text-gray-400">
+                            Kelola tiket Anda yang diamankan oleh blockchain
+                        </p>
                     </div>
-                )}
+                    <button
+                        onClick={refreshTickets}
+                        disabled={loading}
+                        className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors disabled:opacity-50"
+                    >
+                        {loading ? 'Memperbarui...' : '🔄 Refresh'}
+                    </button>
+                </div>
 
-                {/* Control Bar */}
-                <div className="mb-6 flex flex-wrap gap-3 justify-between">
-                    <div className="flex space-x-2">
-                        <button
-                            onClick={() => setSelectedFilter('all')}
-                            className={`px-4 py-2 rounded-lg text-sm ${selectedFilter === 'all'
-                                ? 'bg-purple-600 text-white'
-                                : 'bg-gray-700 text-gray-300'
-                                }`}
-                        >
-                            Semua
-                        </button>
-                        <button
-                            onClick={() => setSelectedFilter('valid')}
-                            className={`px-4 py-2 rounded-lg text-sm ${selectedFilter === 'valid'
-                                ? 'bg-green-600 text-white'
-                                : 'bg-gray-700 text-gray-300'
-                                }`}
-                        >
-                            Valid
-                        </button>
-                        <button
-                            onClick={() => setSelectedFilter('invalid')}
-                            className={`px-4 py-2 rounded-lg text-sm ${selectedFilter === 'invalid'
-                                ? 'bg-red-600 text-white'
-                                : 'bg-gray-700 text-gray-300'
-                                }`}
-                        >
-                            Tidak Valid
-                        </button>
-                        <button
-                            onClick={() => setSelectedFilter('verified')}
-                            className={`px-4 py-2 rounded-lg text-sm ${selectedFilter === 'verified'
-                                ? 'bg-blue-600 text-white'
-                                : 'bg-gray-700 text-gray-300'
-                                }`}
-                        >
-                            Terverifikasi
-                        </button>
+                {/* Toggle for deleted concerts */}
+                <div className="bg-gray-800 rounded-lg p-4 mb-6 flex items-center justify-between">
+                    <div className="flex items-center">
+                        <label className="text-gray-300 flex items-center cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={showDeletedConcerts}
+                                onChange={(e) => setShowDeletedConcerts(e.target.checked)}
+                                className="mr-2"
+                            />
+                            Tampilkan tiket untuk konser yang dihapus
+                        </label>
                     </div>
-
-                    <div className="flex space-x-2">
-                        <input
-                            type="text"
-                            placeholder="Cari tiket..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:border-purple-500 focus:outline-none"
-                        />
-
-                        <select
-                            value={sortOrder}
-                            onChange={(e) => setSortOrder(e.target.value)}
-                            className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:border-purple-500 focus:outline-none"
-                        >
-                            <option value="newest">Terbaru</option>
-                            <option value="oldest">Terlama</option>
-                        </select>
-
-                        <button
-                            onClick={() => loadTickets()}
-                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                            disabled={loading}
-                        >
-                            {loading ? <LoadingSpinner size="sm" /> : 'Refresh'}
-                        </button>
+                    <div className="text-sm text-gray-400">
+                        Menampilkan {filteredTickets.length} dari {tickets.length} tiket
                     </div>
                 </div>
 
-                {/* Analytics Summary */}
-                {tickets.length > 0 && (
-                    <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
-                        <div className="bg-gray-800 rounded-lg p-4 border border-purple-700/30">
-                            <h3 className="text-gray-400 text-sm mb-1">Total Tiket</h3>
-                            <p className="text-2xl font-bold text-white">{tickets.length}</p>
-                        </div>
-                        <div className="bg-gray-800 rounded-lg p-4 border border-green-700/30">
-                            <h3 className="text-gray-400 text-sm mb-1">Tiket Valid</h3>
-                            <p className="text-2xl font-bold text-green-400">
-                                {tickets.filter(t =>
-                                    ticketAnalytics[t._id]?.isValid && concerts[t.concertId] !== null
-                                ).length}
+                {/* Tickets grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {filteredTickets.length > 0 ? (
+                        filteredTickets.map(ticket => (
+                            <TicketCard
+                                key={ticket._id}
+                                ticket={ticket}
+                                onViewDetails={handleViewDetails}
+                                refreshTickets={refreshTickets}
+                            />
+                        ))
+                    ) : (
+                        <div className="col-span-3 text-center bg-gray-800 p-8 rounded-lg">
+                            <p className="text-white text-lg">Tidak ada tiket ditemukan</p>
+                            <p className="text-gray-400 mt-2">
+                                {showDeletedConcerts
+                                    ? "Anda belum memiliki tiket sama sekali"
+                                    : "Coba aktifkan 'Tampilkan tiket untuk konser yang dihapus' untuk melihat semua tiket Anda"}
                             </p>
                         </div>
-                        <div className="bg-gray-800 rounded-lg p-4 border border-red-700/30">
-                            <h3 className="text-gray-400 text-sm mb-1">Tiket Tidak Valid</h3>
-                            <p className="text-2xl font-bold text-red-400">
-                                {tickets.filter(t =>
-                                    !ticketAnalytics[t._id]?.isValid || concerts[t.concertId] === null
-                                ).length}
-                            </p>
-                        </div>
-                        <div className="bg-gray-800 rounded-lg p-4 border border-blue-700/30">
-                            <h3 className="text-gray-400 text-sm mb-1">Terverifikasi</h3>
-                            <p className="text-2xl font-bold text-blue-400">
-                                {tickets.filter(t => t.isVerified).length}
-                            </p>
-                        </div>
-                    </div>
-                )}
+                    )}
+                </div>
 
-                {/* Tickets List dengan AnimatePresence untuk animasi saat item dihapus */}
-                {filteredTickets.length === 0 ? (
-                    <div className="bg-gray-800 rounded-lg p-8 text-center">
-                        <h2 className="text-2xl text-white mb-4">Tidak Ada Tiket</h2>
-                        <p className="text-gray-400 mb-6">
-                            {tickets.length > 0
-                                ? 'Tidak ada tiket yang cocok dengan filter saat ini'
-                                : 'Anda belum memiliki tiket'}
-                        </p>
-                        <Link
-                            to="/mint-ticket"
-                            className="px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all duration-300"
-                        >
-                            Beli Tiket
-                        </Link>
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <AnimatePresence>
-                            {filteredTickets.map(ticket => renderTicketCard(ticket))}
-                        </AnimatePresence>
-                    </div>
-                )}
-
-                {/* Bottom Navigation */}
-                <div className="mt-12 flex justify-center">
+                {/* Action links */}
+                <div className="mt-8 flex flex-wrap justify-center gap-4">
+                    <Link
+                        to="/marketplace"
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-6 rounded-lg transition-colors"
+                    >
+                        Jelajahi Marketplace
+                    </Link>
                     <Link
                         to="/mint-ticket"
-                        className="px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 shadow-lg shadow-purple-500/10 hover:shadow-purple-500/20 transition-all duration-300"
+                        className="bg-green-600 hover:bg-green-700 text-white py-2 px-6 rounded-lg transition-colors"
                     >
-                        Beli Tiket Konser Lainnya
+                        Beli Tiket Baru
                     </Link>
+                    {filteredTickets.some(ticket => ticket.isListed) && (
+                        <button
+                            onClick={() => navigate('/marketplace')}
+                            className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-6 rounded-lg transition-colors"
+                        >
+                            Lihat Tiket Saya di Marketplace
+                        </button>
+                    )}
                 </div>
             </div>
-
-            {/* Delete Modal */}
-            {renderDeleteModal()}
-
-            {/* Toast Notification */}
-            <AnimatePresence>
-                {showToast && renderToast()}
-            </AnimatePresence>
         </div>
     );
 };

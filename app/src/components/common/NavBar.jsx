@@ -1,4 +1,4 @@
-// src/components/common/NavBar.jsx
+// src/components/common/NavBar.jsx - Updated with Marketplace Link
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
@@ -120,6 +120,13 @@ const NavBar = () => {
                         >
                             <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500">Mint</span>
                         </Link>
+                        {/* NEW: Link to Marketplace */}
+                        <Link
+                            to="/marketplace"
+                            className={`text-white hover:text-purple-400 px-3 py-2 text-sm font-medium transition-all ${isActive('/marketplace')}`}
+                        >
+                            <span className="text-transparent bg-clip-text bg-gradient-to-r from-teal-500 to-blue-500">Marketplace</span>
+                        </Link>
                         <Link
                             to="/my-tickets"
                             className={`text-white hover:text-purple-400 px-3 py-2 text-sm font-medium transition-all ${isActive('/my-tickets')}`}
@@ -206,6 +213,13 @@ const NavBar = () => {
                             className={`block px-3 py-2 rounded-md text-base font-medium hover:bg-gray-700 ${isActive('/mint-ticket') ? 'bg-gray-700 bg-opacity-50 border-l-4 border-pink-500' : ''}`}
                         >
                             <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500">Mint Ticket</span>
+                        </Link>
+                        {/* NEW: Marketplace Link for Mobile */}
+                        <Link
+                            to="/marketplace"
+                            className={`block px-3 py-2 rounded-md text-base font-medium hover:bg-gray-700 ${isActive('/marketplace') ? 'bg-gray-700 bg-opacity-50 border-l-4 border-teal-500' : ''}`}
+                        >
+                            <span className="text-transparent bg-clip-text bg-gradient-to-r from-teal-500 to-blue-500">Marketplace</span>
                         </Link>
                         <Link
                             to="/my-tickets"
