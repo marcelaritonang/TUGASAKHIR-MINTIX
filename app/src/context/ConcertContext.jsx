@@ -218,7 +218,7 @@ export const ConcertProvider = ({ children }) => {
         }
     };
 
-    // Function to load pending concerts for admin
+    // Function to load pending concerts for admin - PERBAIKAN UTAMA
     const loadAdminPendingConcerts = async () => {
         try {
             setLoading(true);
@@ -235,35 +235,84 @@ export const ConcertProvider = ({ children }) => {
                 return [];
             }
 
-            // Try to fetch pending concerts from API
+            let pendingConcertsData = [];
+            let success = false;
+
+            // Try multiple methods to get pending concerts
+            // Method 1: Use ApiService.getPendingConcerts if available
             try {
-                console.log('Fetching pending concerts from API');
-                const apiPendingConcerts = await ApiService.getPendingConcerts();
-                console.log('API response for pending concerts:', apiPendingConcerts ? 'received' : 'empty');
-
-                // Format API concerts to match frontend structure
-                const formattedPendingConcerts = Array.isArray(apiPendingConcerts) ?
-                    apiPendingConcerts.map(formatConcertFromApi) : [];
-
-                console.log('Formatted pending concerts:', formattedPendingConcerts.length);
-                setPendingConcerts(formattedPendingConcerts);
-
-                // Save to localStorage as backup
-                localStorage.setItem('pendingConcerts', JSON.stringify(formattedPendingConcerts));
-
-                setLoading(false);
-                return formattedPendingConcerts;
+                if (typeof ApiService.getPendingConcerts === 'function') {
+                    console.log('Using ApiService.getPendingConcerts');
+                    pendingConcertsData = await ApiService.getPendingConcerts();
+                    console.log('API response for pending concerts:', pendingConcertsData ? 'received' : 'empty');
+                    success = true;
+                } else {
+                    throw new Error('ApiService.getPendingConcerts not available');
+                }
             } catch (apiError) {
-                console.error('Error fetching pending concerts from API:', apiError);
+                console.error('Error using ApiService.getPendingConcerts:', apiError);
 
-                // Fallback to localStorage if API fails
-                const localPendingConcerts = JSON.parse(localStorage.getItem('pendingConcerts') || '[]');
-                console.log('Falling back to localStorage for pending concerts:', localPendingConcerts.length);
-                setPendingConcerts(localPendingConcerts);
+                // Method 2: Try direct fetch to main endpoint
+                try {
+                    console.log('Trying direct fetch to concerts/pending endpoint');
+                    const response = await fetch('http://localhost:5000/api/concerts/pending', {
+                        headers: {
+                            'x-auth-token': AuthService.getToken()
+                        }
+                    });
 
-                setLoading(false);
-                return localPendingConcerts;
+                    if (!response.ok) {
+                        throw new Error(`API returned ${response.status}`);
+                    }
+
+                    pendingConcertsData = await response.json();
+                    console.log('Direct fetch successful:', pendingConcertsData.length, 'concerts');
+                    success = true;
+                } catch (fetchError) {
+                    console.error('Error with direct fetch:', fetchError);
+
+                    // Method 3: Try admin endpoint
+                    try {
+                        console.log('Trying admin endpoint');
+                        const adminResponse = await fetch('http://localhost:5000/api/admin/concerts/pending', {
+                            headers: {
+                                'x-auth-token': AuthService.getToken()
+                            }
+                        });
+
+                        if (!adminResponse.ok) {
+                            throw new Error(`Admin API returned ${adminResponse.status}`);
+                        }
+
+                        pendingConcertsData = await adminResponse.json();
+                        console.log('Admin endpoint fetch successful:', pendingConcertsData.length, 'concerts');
+                        success = true;
+                    } catch (adminError) {
+                        console.error('Error with admin endpoint:', adminError);
+                    }
+                }
             }
+
+            // Fallback to localStorage if all API calls failed
+            if (!success) {
+                console.log('Falling back to localStorage for pending concerts');
+                const localPendingConcerts = JSON.parse(localStorage.getItem('pendingConcerts') || '[]');
+                console.log('Retrieved', localPendingConcerts.length, 'concerts from localStorage');
+                pendingConcertsData = localPendingConcerts;
+            } else {
+                // If API call was successful, update localStorage
+                localStorage.setItem('pendingConcerts', JSON.stringify(pendingConcertsData));
+            }
+
+            // Format API concerts to match frontend structure
+            const formattedPendingConcerts = Array.isArray(pendingConcertsData) ?
+                pendingConcertsData.map(formatConcertFromApi) : [];
+
+            console.log('Formatted pending concerts:', formattedPendingConcerts.length);
+            setPendingConcerts(formattedPendingConcerts);
+            setLoading(false);
+
+            return formattedPendingConcerts;
         } catch (err) {
             console.error('Error in loadAdminPendingConcerts:', err);
             setError(err.message || 'An error occurred');
@@ -275,7 +324,7 @@ export const ConcertProvider = ({ children }) => {
     // Helper function to format concert from API response
     const formatConcertFromApi = (concert) => {
         return {
-            id: concert._id,
+            id: concert._id || concert.id,
             name: concert.name,
             venue: concert.venue,
             date: concert.date,
@@ -384,25 +433,95 @@ export const ConcertProvider = ({ children }) => {
         }
     };
 
-    // Function to approve a concert (admin) - MODIFIED untuk refresh konser yang approved
+    // Function to approve a concert (admin) - PERBAIKAN UTAMA
     const approveConcert = async (concertId, feedback) => {
         try {
             setLoading(true);
             setError(null);
-            console.log("Approving concert:", concertId);
+            console.log(`Approving concert with ID: ${concertId}`);
 
-            // Send approval to API
-            const response = await ApiService.approveConcert(concertId, {
-                feedback: feedback || 'Approved'
-            });
+            // Ensure we have auth token
+            const token = AuthService.getToken();
+            if (!token) {
+                await AuthService.loginTest();
+            }
 
-            console.log('Approve concert response:', response ? 'received' : 'empty');
+            let approvedConcertData = null;
+            let success = false;
+
+            // Try multiple methods to approve the concert
+            // Method 1: Try ApiService if available
+            try {
+                if (typeof ApiService.approveConcert === 'function') {
+                    console.log('Using ApiService.approveConcert');
+                    approvedConcertData = await ApiService.approveConcert(concertId, feedback || 'Approved');
+                    success = true;
+                } else {
+                    throw new Error('ApiService.approveConcert not available');
+                }
+            } catch (apiError) {
+                console.error('Error using ApiService.approveConcert:', apiError);
+
+                // Method 2: Try direct fetch to concerts endpoint
+                try {
+                    console.log('Trying direct fetch to concerts endpoint');
+                    const response = await fetch(`http://localhost:5000/api/concerts/${concertId}/approve`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-auth-token': AuthService.getToken()
+                        },
+                        body: JSON.stringify({ feedback: feedback || 'Approved' })
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.msg || `API returned ${response.status}`);
+                    }
+
+                    approvedConcertData = await response.json();
+                    success = true;
+                } catch (fetchError) {
+                    console.error('Error with concerts endpoint:', fetchError);
+
+                    // Method 3: Try admin endpoint
+                    try {
+                        console.log('Trying admin endpoint');
+                        const adminResponse = await fetch(`http://localhost:5000/api/admin/concerts/${concertId}/approve`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'x-auth-token': AuthService.getToken()
+                            },
+                            body: JSON.stringify({ feedback: feedback || 'Approved' })
+                        });
+
+                        if (!adminResponse.ok) {
+                            const errorData = await adminResponse.json().catch(() => ({}));
+                            throw new Error(errorData.msg || `Admin API returned ${adminResponse.status}`);
+                        }
+
+                        approvedConcertData = await adminResponse.json();
+                        success = true;
+                    } catch (adminError) {
+                        console.error('Error with admin endpoint:', adminError);
+                    }
+                }
+            }
+
+            if (!success || !approvedConcertData) {
+                throw new Error('Failed to approve concert after trying all methods');
+            }
+
+            console.log('Concert approved successfully:', approvedConcertData.name || approvedConcertData.id);
 
             // Update local state
-            setPendingConcerts(prev => prev.filter(concert => concert.id !== concertId));
+            setPendingConcerts(prev => prev.filter(concert =>
+                concert.id !== concertId && concert._id !== concertId
+            ));
 
             // Add to approved concerts
-            const approvedConcert = formatConcertFromApi(response);
+            const approvedConcert = formatConcertFromApi(approvedConcertData);
             setApprovedConcerts(prev => [approvedConcert, ...prev]);
 
             // Trigger a refresh of approved concerts to ensure consistency
@@ -411,7 +530,7 @@ export const ConcertProvider = ({ children }) => {
             }, 1000);
 
             setLoading(false);
-            return response;
+            return approvedConcertData;
         } catch (err) {
             console.error('Error approving concert:', err);
             setError(err.message || 'Failed to approve concert');
@@ -420,29 +539,99 @@ export const ConcertProvider = ({ children }) => {
         }
     };
 
-    // Function to reject a concert (admin)
+    // Function to reject a concert (admin) - PERBAIKAN UTAMA
     const rejectConcert = async (concertId, feedback) => {
         try {
             setLoading(true);
             setError(null);
-            console.log("Rejecting concert:", concertId);
+            console.log(`Rejecting concert with ID: ${concertId}`);
 
-            // Send rejection to API
-            const response = await ApiService.rejectConcert(concertId, {
-                feedback: feedback || 'Rejected'
-            });
+            // Ensure we have auth token
+            const token = AuthService.getToken();
+            if (!token) {
+                await AuthService.loginTest();
+            }
 
-            console.log('Reject concert response:', response ? 'received' : 'empty');
+            let rejectedConcertData = null;
+            let success = false;
+
+            // Try multiple methods to reject the concert
+            // Method 1: Try ApiService if available
+            try {
+                if (typeof ApiService.rejectConcert === 'function') {
+                    console.log('Using ApiService.rejectConcert');
+                    rejectedConcertData = await ApiService.rejectConcert(concertId, feedback);
+                    success = true;
+                } else {
+                    throw new Error('ApiService.rejectConcert not available');
+                }
+            } catch (apiError) {
+                console.error('Error using ApiService.rejectConcert:', apiError);
+
+                // Method 2: Try direct fetch to concerts endpoint
+                try {
+                    console.log('Trying direct fetch to concerts endpoint');
+                    const response = await fetch(`http://localhost:5000/api/concerts/${concertId}/reject`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-auth-token': AuthService.getToken()
+                        },
+                        body: JSON.stringify({ feedback })
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.msg || `API returned ${response.status}`);
+                    }
+
+                    rejectedConcertData = await response.json();
+                    success = true;
+                } catch (fetchError) {
+                    console.error('Error with concerts endpoint:', fetchError);
+
+                    // Method 3: Try admin endpoint
+                    try {
+                        console.log('Trying admin endpoint');
+                        const adminResponse = await fetch(`http://localhost:5000/api/admin/concerts/${concertId}/reject`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'x-auth-token': AuthService.getToken()
+                            },
+                            body: JSON.stringify({ feedback })
+                        });
+
+                        if (!adminResponse.ok) {
+                            const errorData = await adminResponse.json().catch(() => ({}));
+                            throw new Error(errorData.msg || `Admin API returned ${adminResponse.status}`);
+                        }
+
+                        rejectedConcertData = await adminResponse.json();
+                        success = true;
+                    } catch (adminError) {
+                        console.error('Error with admin endpoint:', adminError);
+                    }
+                }
+            }
+
+            if (!success || !rejectedConcertData) {
+                throw new Error('Failed to reject concert after trying all methods');
+            }
+
+            console.log('Concert rejected successfully:', rejectedConcertData.name || rejectedConcertData.id);
 
             // Update local state
-            setPendingConcerts(prev => prev.filter(concert => concert.id !== concertId));
+            setPendingConcerts(prev => prev.filter(concert =>
+                concert.id !== concertId && concert._id !== concertId
+            ));
 
             // Add to rejected concerts
-            const rejectedConcert = formatConcertFromApi(response);
+            const rejectedConcert = formatConcertFromApi(rejectedConcertData);
             setRejectedConcerts(prev => [rejectedConcert, ...prev]);
 
             setLoading(false);
-            return response;
+            return rejectedConcertData;
         } catch (err) {
             console.error('Error rejecting concert:', err);
             setError(err.message || 'Failed to reject concert');
@@ -451,25 +640,93 @@ export const ConcertProvider = ({ children }) => {
         }
     };
 
-    // Function to request more info (admin)
+    // Function to request more info (admin) - PERBAIKAN UTAMA
     const requestMoreInfo = async (concertId, requestMessage) => {
         try {
             setLoading(true);
             setError(null);
-            console.log("Requesting more info for concert:", concertId);
+            console.log(`Requesting more info for concert with ID: ${concertId}`);
 
-            // Send request to API
-            const response = await ApiService.requestMoreInfo(concertId, {
-                message: requestMessage
-            });
+            // Ensure we have auth token
+            const token = AuthService.getToken();
+            if (!token) {
+                await AuthService.loginTest();
+            }
 
-            console.log('Request more info response:', response ? 'received' : 'empty');
+            let updatedConcertData = null;
+            let success = false;
+
+            // Try multiple methods to request more info
+            // Method 1: Try ApiService if available
+            try {
+                if (typeof ApiService.requestMoreInfo === 'function') {
+                    console.log('Using ApiService.requestMoreInfo');
+                    updatedConcertData = await ApiService.requestMoreInfo(concertId, requestMessage);
+                    success = true;
+                } else {
+                    throw new Error('ApiService.requestMoreInfo not available');
+                }
+            } catch (apiError) {
+                console.error('Error using ApiService.requestMoreInfo:', apiError);
+
+                // Method 2: Try direct fetch to concerts endpoint
+                try {
+                    console.log('Trying direct fetch to concerts endpoint');
+                    const response = await fetch(`http://localhost:5000/api/concerts/${concertId}/request-info`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-auth-token': AuthService.getToken()
+                        },
+                        body: JSON.stringify({ message: requestMessage })
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.msg || `API returned ${response.status}`);
+                    }
+
+                    updatedConcertData = await response.json();
+                    success = true;
+                } catch (fetchError) {
+                    console.error('Error with concerts endpoint:', fetchError);
+
+                    // Method 3: Try admin endpoint
+                    try {
+                        console.log('Trying admin endpoint');
+                        const adminResponse = await fetch(`http://localhost:5000/api/admin/concerts/${concertId}/request-info`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'x-auth-token': AuthService.getToken()
+                            },
+                            body: JSON.stringify({ message: requestMessage })
+                        });
+
+                        if (!adminResponse.ok) {
+                            const errorData = await adminResponse.json().catch(() => ({}));
+                            throw new Error(errorData.msg || `Admin API returned ${adminResponse.status}`);
+                        }
+
+                        updatedConcertData = await adminResponse.json();
+                        success = true;
+                    } catch (adminError) {
+                        console.error('Error with admin endpoint:', adminError);
+                    }
+                }
+            }
+
+            if (!success || !updatedConcertData) {
+                throw new Error('Failed to request more info after trying all methods');
+            }
+
+            console.log('Request for more info sent successfully:', updatedConcertData.name || updatedConcertData.id);
 
             // Update local state - unlike approval/rejection, the concert stays in pending
-            const updatedConcert = formatConcertFromApi(response);
+            const updatedConcert = formatConcertFromApi(updatedConcertData);
 
             const updatedConcerts = pendingConcerts.map(concert => {
-                if (concert.id === concertId) {
+                if (concert.id === concertId || concert._id === concertId) {
                     return updatedConcert;
                 }
                 return concert;
@@ -488,7 +745,7 @@ export const ConcertProvider = ({ children }) => {
     };
 
     // Function to mint a ticket
-    const mintTicket = async (concertId, sectionName, quantity = 1, seatNumber = null) => {
+    const mintTicket = async (concertId, sectionName, quantity = 1, seatNumber = null, transactionSignature = null) => {
         try {
             setLoading(true);
             setError(null);
@@ -518,6 +775,12 @@ export const ConcertProvider = ({ children }) => {
             // Include seat number if provided
             if (seatNumber) {
                 mintData.seatNumber = seatNumber;
+            }
+
+            // If transaction signature is provided (from direct blockchain), include it
+            if (transactionSignature) {
+                mintData.transactionSignature = transactionSignature;
+                console.log("Including transaction signature:", transactionSignature);
             }
 
             // Log details
@@ -565,8 +828,8 @@ export const ConcertProvider = ({ children }) => {
 
             setApprovedConcerts(updatedConcerts);
 
-            // Update minted seats cache
-            await updateMintedSeatsCache(concertId, sectionName, seatNumber);
+            // Update minted seats cache using the enhanced method
+            await ApiService.updateMintedSeatsCache(concertId, sectionName, seatNumber);
 
             // Get updated tickets
             await loadMyTickets();
@@ -580,11 +843,39 @@ export const ConcertProvider = ({ children }) => {
             throw err;
         }
     };
+    const clearConcertCache = () => {
+        console.log("Clearing concert cache from context");
 
+        // Reset approvedConcerts state
+        setApprovedConcerts([]);
+
+        // Also clear from ApiService if available
+        if (typeof ApiService.clearConcertCache === 'function') {
+            ApiService.clearConcertCache();
+        } else {
+            console.warn("ApiService.clearConcertCache is not a function");
+            // Alternative: clear from localStorage
+            localStorage.removeItem('concerts');
+        }
+    };
+
+    //
     // Function to load user's tickets - perbaikan untuk mencegah loop
-    const loadMyTickets = useCallback(async () => {
-        // Hindari pemanggilan berulang jika sedang loading
-        if (loadingRef.current) {
+    const loadMyTickets = useCallback(async (forceRefresh = false) => {
+        // Jika forceRefresh true, bersihkan flag loading dan cache
+        if (forceRefresh) {
+            console.log("Force refreshing tickets...");
+            loadingRef.current = false;
+
+            // Hapus cache dari localStorage
+            localStorage.removeItem('myTickets');
+            localStorage.removeItem('my_tickets_true');
+            localStorage.removeItem('my_tickets_false');
+            localStorage.removeItem('my_tickets_last_update');
+        }
+
+        // Hindari pemanggilan berulang jika sedang loading, kecuali force refresh
+        if (loadingRef.current && !forceRefresh) {
             console.log("Already loading tickets, skipping duplicate call");
             return myTickets;
         }
@@ -611,43 +902,112 @@ export const ConcertProvider = ({ children }) => {
             // Catat waktu pemuatan
             ticketsLoadedTimeRef.current = Date.now();
 
-            // Ambil tiket dari API
-            const response = await fetch(`${ApiService.baseUrl}/tickets`, {
-                headers: {
-                    'x-auth-token': AuthService.getToken()
+            // Tambahkan retry logic untuk keandalan
+            let attempts = 0;
+            const maxAttempts = 3;
+            let lastError = null;
+
+            while (attempts < maxAttempts) {
+                attempts++;
+
+                try {
+                    // Set timeout untuk mencegah request hang
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+                    // Ambil tiket dari API dengan parameter force refresh
+                    const response = await fetch(`${ApiService.baseUrl}/tickets?forceRefresh=${forceRefresh}`, {
+                        headers: {
+                            'x-auth-token': AuthService.getToken(),
+                            'Cache-Control': forceRefresh ? 'no-cache, no-store' : 'default'
+                        },
+                        signal: controller.signal
+                    });
+
+                    clearTimeout(timeoutId);
+                    console.log("Tickets API response status:", response.status);
+
+                    // Tangani berbagai response status
+                    if (response.status === 401) {
+                        console.warn("Token tidak valid, coba login ulang...");
+                        // Coba login ulang otomatis
+                        if (publicKey) {
+                            const success = await AuthService.loginTest(publicKey.toString());
+                            if (success) {
+                                console.log("Re-authentication successful, retrying ticket fetch");
+                                continue; // Coba lagi dengan token baru
+                            }
+                        }
+                        throw new Error("Authentication failed");
+                    }
+
+                    if (response.status === 429) {
+                        console.warn(`Rate limit hit (attempt ${attempts}), waiting before retry...`);
+                        // Tunggu dengan backoff eksponensial sebelum retry
+                        const backoffTime = Math.min(1000 * Math.pow(2, attempts - 1), 10000);
+                        await new Promise(resolve => setTimeout(resolve, backoffTime));
+                        continue;
+                    }
+
+                    if (!response.ok) {
+                        console.error("Error loading tickets:", response.status);
+                        throw new Error(`Failed to load tickets: ${response.status}`);
+                    }
+
+                    const ticketsData = await response.json();
+                    console.log(`Tickets loaded: ${Array.isArray(ticketsData) ? ticketsData.length : 'not an array'}`);
+
+                    // Validasi respons
+                    if (!Array.isArray(ticketsData)) {
+                        console.warn("Tickets response is not an array:", ticketsData);
+                        // Cek jika ada format berbeda yang perlu ditangani
+                        const parsedTickets = ticketsData.tickets || ticketsData.data || [];
+
+                        if (Array.isArray(parsedTickets)) {
+                            setMyTickets(parsedTickets);
+                            // Cache ke localStorage
+                            localStorage.setItem('myTickets', JSON.stringify(parsedTickets));
+                            setLoading(false);
+                            loadingRef.current = false;
+                            return parsedTickets;
+                        } else {
+                            throw new Error("Invalid response format");
+                        }
+                    }
+
+                    // Set ke state
+                    setMyTickets(ticketsData);
+
+                    // Cache ke localStorage
+                    localStorage.setItem('myTickets', JSON.stringify(ticketsData));
+                    localStorage.setItem('my_tickets_last_update', Date.now().toString());
+
+                    setLoading(false);
+                    loadingRef.current = false;
+                    return ticketsData;
+
+                } catch (fetchErr) {
+                    // Tangani berbagai error
+                    lastError = fetchErr;
+                    console.error(`Error fetching tickets (attempt ${attempts}/${maxAttempts}):`, fetchErr.message);
+
+                    // Untuk timeout, coba langsung lagi
+                    if (fetchErr.name === 'AbortError') {
+                        console.warn("Request time out, will retry...");
+                        continue;
+                    }
+
+                    // Untuk error lain, tunggu sebelum retry
+                    if (attempts < maxAttempts) {
+                        const retryDelay = 1000 * attempts;
+                        await new Promise(resolve => setTimeout(resolve, retryDelay));
+                    }
                 }
-            });
-
-            console.log("Tickets API response status:", response.status);
-
-            if (!response.ok) {
-                console.error("Error loading tickets:", response.status);
-                throw new Error(`Failed to load tickets: ${response.status}`);
             }
 
-            const ticketsData = await response.json();
-            console.log(`Tickets loaded: ${Array.isArray(ticketsData) ? ticketsData.length : 'not an array'}`);
+            console.error("All attempts to load tickets failed");
 
-            // Validasi respons
-            if (!Array.isArray(ticketsData)) {
-                console.warn("Tickets response is not an array:", ticketsData);
-                // Cek jika ada format berbeda yang perlu ditangani
-                const parsedTickets = ticketsData.tickets || ticketsData.data || [];
-                setMyTickets(Array.isArray(parsedTickets) ? parsedTickets : []);
-            } else {
-                setMyTickets(ticketsData);
-            }
-
-            // Cache ke localStorage
-            localStorage.setItem('myTickets', JSON.stringify(Array.isArray(ticketsData) ? ticketsData : []));
-
-            setLoading(false);
-            loadingRef.current = false;
-            return ticketsData;
-        } catch (err) {
-            console.error('Error loading tickets:', err);
-
-            // Coba ambil dari localStorage jika API gagal
+            // Jika semua percobaan gagal, coba ambil dari localStorage
             try {
                 console.log("Attempting to load tickets from localStorage");
                 const cachedTickets = JSON.parse(localStorage.getItem('myTickets') || '[]');
@@ -658,6 +1018,25 @@ export const ConcertProvider = ({ children }) => {
                 return cachedTickets;
             } catch (cacheErr) {
                 console.error("Error loading tickets from cache:", cacheErr);
+                setMyTickets([]);
+                setLoading(false);
+                loadingRef.current = false;
+                return [];
+            }
+        } catch (err) {
+            console.error('Error in loadMyTickets:', err);
+
+            // Coba ambil dari localStorage jika API gagal
+            try {
+                console.log("Attempting to load tickets from localStorage after main error");
+                const cachedTickets = JSON.parse(localStorage.getItem('myTickets') || '[]');
+                console.log(`Found ${cachedTickets.length} tickets in localStorage`);
+                setMyTickets(cachedTickets);
+                setLoading(false);
+                loadingRef.current = false;
+                return cachedTickets;
+            } catch (cacheErr) {
+                console.error('Error loading tickets from cache after main error:', cacheErr);
                 setMyTickets([]);
                 setLoading(false);
                 loadingRef.current = false;
@@ -737,30 +1116,41 @@ export const ConcertProvider = ({ children }) => {
         }
     };
 
+    // Update minted seats cache
     const updateMintedSeatsCache = async (concertId, sectionName, seatNumber) => {
         try {
-            // Get current minted seats from localStorage
-            const cacheKey = `minted_seats_${concertId}`;
+            if (!concertId) {
+                console.error("Missing concertId in updateMintedSeatsCache");
+                return false;
+            }
+
+            // Normalisasi concertId ke string
+            const normalizedConcertId = concertId.toString();
+
+            // Ambil data kursi terjual dari localStorage
+            const cacheKey = `minted_seats_${normalizedConcertId}`;
             const cachedSeats = JSON.parse(localStorage.getItem(cacheKey) || '[]');
 
-            // Format seat code: "SectionName-SeatNumber"
+            // Format kode kursi: "SectionName-SeatNumber"
             const seatCode = seatNumber || `${sectionName}-AUTO`;
 
-            // Add to cached seats if not already present
+            // Tambahkan ke cache kursi jika belum ada
             if (!cachedSeats.includes(seatCode)) {
                 cachedSeats.push(seatCode);
                 localStorage.setItem(cacheKey, JSON.stringify(cachedSeats));
             }
 
-            console.log(`Updated minted seats cache for concert ${concertId}, added seat ${seatCode}`);
+            console.log(`Updated minted seats cache for concert ${normalizedConcertId}, added seat ${seatCode}`);
 
-            // Now refresh from API to ensure consistency
+            // Sekarang refresh dari API untuk memastikan konsistensi
             try {
-                const freshMintedSeats = await ApiService.getMintedSeats(concertId);
-                // No need to do anything with the result - the API call will update its own cache
+                if (typeof ApiService.getMintedSeats === 'function') {
+                    const freshMintedSeats = await ApiService.getMintedSeats(normalizedConcertId);
+                    // Tidak perlu melakukan apa-apa dengan hasilnya - API call akan memperbarui cache-nya sendiri
+                }
             } catch (err) {
                 console.warn("Could not refresh minted seats from API:", err);
-                // Continue using local cache since we've already updated it
+                // Lanjutkan menggunakan cache lokal karena kita sudah memperbaruinya
             }
 
             return true;
@@ -775,11 +1165,14 @@ export const ConcertProvider = ({ children }) => {
         try {
             console.log("Getting minted seats for concert:", concertId);
 
-            // Call API to get minted seats
-            const result = await ApiService.getMintedSeats(concertId);
-            console.log("Minted seats result:", result ? `${result.seats?.length || 0} seats` : 'no data');
-
-            return result?.seats || [];
+            // Call API to get minted seats if the function exists
+            if (typeof ApiService.getMintedSeats === 'function') {
+                const result = await ApiService.getMintedSeats(concertId);
+                console.log("Minted seats result:", result ? `${result.seats?.length || 0} seats` : 'no data');
+                return result?.seats || [];
+            } else {
+                throw new Error('ApiService.getMintedSeats not available');
+            }
         } catch (err) {
             console.error('Error getting minted seats:', err);
 
@@ -795,6 +1188,7 @@ export const ConcertProvider = ({ children }) => {
             }
         }
     };
+
     // Create context value
     const contextValue = {
         pendingConcerts,
@@ -833,3 +1227,5 @@ export const useConcerts = () => {
     }
     return context;
 };
+
+export default ConcertContext;

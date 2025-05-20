@@ -31,7 +31,7 @@ import AdminApprovedConcerts from './components/admin/AdminApprovedConcerts';
 import AdminRejectedConcerts from './components/admin/AdminRejectedConcerts';
 import AdminSettings from './components/admin/AdminSettings';
 import AdminLayout from './components/admin/AdminLayout';
-
+import TicketMarketplace from './components/TicketMarketplace';
 // Pastikan AdminLoginModal diimpor jika diperlukan
 import AdminLoginModal from './components/admin/AdminLoginModal';
 
@@ -68,6 +68,7 @@ function App() {
                     <Route path="/ticket/:ticketId" element={<TicketDetail />} />
                     <Route path="/pending-concerts" element={<PendingConcerts />} />
                     <Route path="/concert/:concertId" element={<ConcertDetail />} /> {/* Tambahkan route untuk ConcertDetail */}
+                    <Route path="/marketplace" element={<TicketMarketplace />} />
 
                     {/* Admin Routes - semua melalui AdminLayout */}
                     <Route path="admin" element={<AdminLayout />}>

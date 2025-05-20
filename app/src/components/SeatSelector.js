@@ -20,8 +20,9 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
     const [sectionAvailableSeats, setSectionAvailableSeats] = useState(0);
     const [sectionTotalSeats, setSectionTotalSeats] = useState(0);
     const [refreshInterval, setRefreshInterval] = useState(null);
+    const [myTickets, setMyTickets] = useState([]); // State to store user's tickets
 
-    // Ref untuk mencegah multiple API calls
+    // Ref to prevent multiple API calls
     const loadingRef = useRef(false);
     const lastRefreshRef = useRef(Date.now());
 
@@ -35,19 +36,47 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
         });
     }, [ticketType, concertId, mintedSeats, refreshTrigger]);
 
-    // Set up polling untuk refresh minted seats secara otomatis
+    // Load user's tickets to check owned seats
     useEffect(() => {
-        // Bersihkan interval yang ada jika ada
+        const loadUserTickets = async () => {
+            if (!wallet || !wallet.connected || !concertId) return;
+
+            try {
+                // Check if already authenticated
+                const token = localStorage.getItem('auth_token');
+                if (!token) return;
+
+                // Get user's tickets
+                const userTickets = await ApiService.getMyTickets();
+
+                // Filter tickets for current concert
+                const concertTickets = userTickets.filter(ticket =>
+                    ticket.concertId === concertId
+                );
+
+                console.log(`Loaded ${concertTickets.length} user tickets for concert ${concertId}`);
+                setMyTickets(concertTickets);
+            } catch (err) {
+                console.error("Error loading user tickets:", err);
+            }
+        };
+
+        loadUserTickets();
+    }, [wallet, wallet.connected, concertId, refreshTrigger]);
+
+    // Set up polling for automatic refresh of minted seats
+    useEffect(() => {
+        // Clear existing interval if any
         if (refreshInterval) {
             clearInterval(refreshInterval);
         }
 
-        // Hanya set up polling jika ada concertId dan ticketType
+        // Only set up polling if there is a concertId and ticketType
         if (concertId && ticketType) {
-            // Set interval untuk refresh data setiap 10 detik
+            // Set interval for refreshing data every 10 seconds
             const interval = setInterval(() => {
                 const now = Date.now();
-                // Hindari refresh terlalu sering (minimal 8 detik sejak refresh terakhir)
+                // Avoid refreshing too often (minimum 8 seconds since last refresh)
                 if (now - lastRefreshRef.current >= 8000 && !loadingRef.current) {
                     console.log("Auto-refreshing minted seats...");
                     refreshMintedSeats();
@@ -57,7 +86,7 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
             setRefreshInterval(interval);
         }
 
-        // Cleanup saat komponen unmount
+        // Cleanup when component unmounts
         return () => {
             if (refreshInterval) {
                 clearInterval(refreshInterval);
@@ -65,7 +94,7 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
         };
     }, [concertId, ticketType]);
 
-    // Fungsi untuk refresh minted seats
+    // Function to refresh minted seats
     const refreshMintedSeats = async () => {
         if (!concertId || loadingRef.current) return;
 
@@ -73,23 +102,24 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
         lastRefreshRef.current = Date.now();
 
         try {
+            // Try to use ApiService.getMintedSeats if available
             const result = await ApiService.getMintedSeats(concertId);
             if (result && result.seats) {
-                // Filter berdasarkan ticket type
+                // Filter based on ticket type
                 const filtered = result.seats.filter(seat => {
                     return seat.startsWith(`${ticketType}-`);
                 });
 
-                // Periksa apakah ada perubahan
+                // Check if there are changes
                 const currentSeats = new Set(exactMintedSeats);
                 const newSeats = new Set(filtered);
                 let hasChanges = false;
 
-                // Periksa jika jumlah kursi berbeda
+                // Check if number of seats is different
                 if (currentSeats.size !== newSeats.size) {
                     hasChanges = true;
                 } else {
-                    // Periksa perbedaan kursi
+                    // Check for different seats
                     for (const seat of newSeats) {
                         if (!currentSeats.has(seat)) {
                             hasChanges = true;
@@ -98,9 +128,9 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
                     }
                 }
 
-                // Update hanya jika ada perubahan
+                // Update only if there are changes
                 if (hasChanges) {
-                    console.log(`Minted seats berubah: ${exactMintedSeats.length} → ${filtered.length}`);
+                    console.log(`Minted seats changed: ${exactMintedSeats.length} → ${filtered.length}`);
                     setExactMintedSeats(filtered);
                     // Regenerate seats
                     generateSeats(filtered);
@@ -113,32 +143,32 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
         }
     };
 
-    // Filter minted seats untuk tipe tiket tertentu
+    // Filter minted seats for specific ticket type
     useEffect(() => {
         if (Array.isArray(mintedSeats) && ticketType) {
-            // Filter untuk mendapatkan hanya kursi yang sesuai dengan tipe tiket saat ini
+            // Filter to get only seats matching current ticket type
             const filtered = mintedSeats.filter(seat => {
-                // Format seat biasanya: "TypeTiket-KodeKursi" (e.g., "VIP-A12")
+                // Seat format is typically: "TicketType-SeatCode" (e.g., "VIP-A12")
                 return seat.startsWith(`${ticketType}-`);
             });
 
-            console.log(`Kursi terfilter untuk ${ticketType}:`, filtered);
+            console.log(`Filtered seats for ${ticketType}:`, filtered);
             setExactMintedSeats(filtered);
 
-            // Jika selectedConcert tersedia, perbarui jumlah kursi tersedia
+            // If selectedConcert is available, update available seats count
             if (selectedConcert) {
                 const section = selectedConcert.sections.find(s => s.name === ticketType);
                 if (section) {
-                    // Setel jumlah kursi tersedia berdasarkan total kursi dikurangi jumlah kursi yang terjual
+                    // Set available seats based on total seats minus sold seats
                     const availableCount = Math.max(0, section.totalSeats - filtered.length);
                     setSectionAvailableSeats(availableCount);
                     setSectionTotalSeats(section.totalSeats);
 
-                    // Penting: Perbarui section.availableSeats di prop selectedConcert
-                    // dengan cara panggil callback untuk melakukan update
+                    // Important: Update section.availableSeats in selectedConcert prop
+                    // by calling the callback to update
                     if (section.availableSeats !== availableCount) {
-                        console.log(`Memperbarui jumlah kursi yang tersedia untuk ${ticketType}: ${availableCount}/${section.totalSeats}`);
-                        // Kirim data perubahan melalui onSeatSelected dengan parameter khusus
+                        console.log(`Updating available seats for ${ticketType}: ${availableCount}/${section.totalSeats}`);
+                        // Send data change via onSeatSelected with special parameter
                         onSeatSelected(null, {
                             updateAvailability: true,
                             ticketType: ticketType,
@@ -153,15 +183,15 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
         }
     }, [mintedSeats, ticketType, selectedConcert]);
 
-    // Mengambil saldo Solana wallet
+    // Fetch Solana wallet balance
     useEffect(() => {
         const fetchSolanaBalance = async () => {
             if (wallet && wallet.publicKey) {
                 try {
-                    // Gunakan blockchainService untuk mendapatkan saldo
+                    // Use blockchainService to get balance
                     const balance = await blockchainService.getSolanaBalance(wallet.publicKey);
                     setSolanaBalance(balance);
-                    console.log(`Saldo Solana: ${balance} SOL`);
+                    console.log(`Solana balance: ${balance} SOL`);
                 } catch (err) {
                     console.error("Error fetching Solana balance:", err);
                 }
@@ -171,7 +201,7 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
         fetchSolanaBalance();
     }, [wallet, wallet.publicKey]);
 
-    // Menghasilkan layout kursi saat komponen dimuat atau saat properti berubah
+    // Generate seat layout when component loads or props change
     useEffect(() => {
         if (!ticketType || !selectedConcert) {
             setAvailableSeats([]);
@@ -179,22 +209,30 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
         }
 
         generateSeats();
-    }, [ticketType, selectedConcert, exactMintedSeats, refreshTrigger]);
+    }, [ticketType, selectedConcert, exactMintedSeats, refreshTrigger, myTickets]);
 
-    // Fungsi untuk menghasilkan layout kursi berdasarkan jumlah total kursi dan kursi yang sudah di-mint
+    // Check if seat is owned by current user
+    const isOwnedByUser = (seatCode) => {
+        return myTickets.some(ticket =>
+            ticket.sectionName === ticketType &&
+            ticket.seatNumber === seatCode.split('-')[1]
+        );
+    };
+
+    // Generate seat layout based on total seats and minted seats
     const generateSeats = (mintedSeatsArray = null) => {
         setLoading(true);
         setError('');
 
         try {
-            // Temukan seksi tiket yang dipilih
+            // Find selected ticket section
             const section = selectedConcert.sections.find(s => s.name === ticketType);
 
             if (!section) {
-                throw new Error(`Tipe tiket ${ticketType} tidak ditemukan`);
+                throw new Error(`Ticket type ${ticketType} not found`);
             }
 
-            // Gunakan parameter mintedSeatsArray jika disediakan, jika tidak gunakan state exactMintedSeats
+            // Use mintedSeatsArray parameter if provided, otherwise use exactMintedSeats state
             const seatsToCheck = mintedSeatsArray || exactMintedSeats;
 
             console.log(`Generating seats for ${ticketType}:`, {
@@ -208,15 +246,15 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
             setSectionAvailableSeats(realAvailableSeats);
             setSectionTotalSeats(section.totalSeats);
 
-            // Tentukan layout kursi (jumlah baris dan kolom)
+            // Determine seat layout (rows and columns)
             const totalSeats = section.totalSeats;
-            const aspectRatio = 2; // Rasio lebar:tinggi
+            const aspectRatio = 2; // Width:height ratio
 
-            // Hitung jumlah baris dan kolom
+            // Calculate number of rows and columns
             let cols = Math.ceil(Math.sqrt(totalSeats * aspectRatio));
             let rows = Math.ceil(totalSeats / cols);
 
-            // Pastikan jumlah kursi mencukupi
+            // Ensure seats are sufficient
             if (rows * cols < totalSeats) {
                 cols += 1;
             }
@@ -224,7 +262,7 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
             setRows(rows);
             setColumns(cols);
 
-            // Buat array kursi dengan kode yang sesuai
+            // Create array of seats with appropriate codes
             const allSeats = [];
             for (let row = 0; row < rows; row++) {
                 for (let col = 0; col < cols; col++) {
@@ -233,55 +271,70 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
                         // Format: VIP-A12
                         const rowLabel = String.fromCharCode(65 + Math.floor(row / 10)); // A, B, C, ...
                         const seatCode = `${ticketType}-${rowLabel}${seatNumber}`;
+                        const seatNumberCode = `${rowLabel}${seatNumber}`;
 
-                        // Cek apakah kursi sudah terjual dengan pencocokan yang tepat
+                        // Check if seat is already minted with exact matching
                         const isMinted = seatsToCheck.includes(seatCode);
+
+                        // Check if seat is owned by current user
+                        const isOwned = myTickets.some(ticket =>
+                            ticket.sectionName === ticketType &&
+                            ticket.seatNumber === seatNumberCode
+                        );
 
                         allSeats.push({
                             code: seatCode,
+                            seatNumberCode,
                             row,
                             col,
-                            isMinted
+                            isMinted,
+                            isOwned
                         });
                     }
                 }
             }
 
-            console.log(`Generated ${allSeats.length} seats, ${allSeats.filter(s => s.isMinted).length} already minted`);
+            console.log(`Generated ${allSeats.length} seats, ${allSeats.filter(s => s.isMinted).length} already minted, ${allSeats.filter(s => s.isOwned).length} owned by user`);
             setAvailableSeats(allSeats);
 
-            // Jika seat yang dipilih sudah terjual, reset pilihan
+            // If selected seat is already sold, reset selection
             if (selectedSeat && allSeats.find(s => s.code === selectedSeat)?.isMinted) {
                 setSelectedSeat('');
                 onSeatSelected('');
             }
         } catch (err) {
-            console.error("Error membuat layout kursi:", err);
-            setError(err.message || "Gagal membuat layout kursi");
+            console.error("Error generating seat layout:", err);
+            setError(err.message || "Failed to create seat layout");
         } finally {
             setLoading(false);
         }
     };
 
-    // Handler untuk pemilihan kursi
+    // Handler for seat click
     const handleSeatClick = (seat) => {
         if (seat.isMinted) {
-            console.log(`Kursi ${seat.code} sudah terjual dan tidak dapat dipilih`);
-            return; // Jangan lakukan apa-apa jika kursi sudah di-mint
+            // If seat is owned by the user, show a special message
+            if (seat.isOwned) {
+                console.log(`Seat ${seat.code} is owned by you`);
+                setError(`You already own seat ${seat.seatNumberCode}`);
+            } else {
+                console.log(`Seat ${seat.code} is already sold and cannot be selected`);
+            }
+            return; // Don't do anything if seat is already minted
         }
 
-        // Periksa saldo Solana
+        // Check Solana balance
         if (solanaBalance < ticketPrice) {
-            setError(`Saldo Solana tidak mencukupi. Diperlukan: ${ticketPrice} SOL, Saldo Anda: ${solanaBalance.toFixed(4)} SOL`);
+            setError(`Insufficient Solana balance. Required: ${ticketPrice} SOL, Your balance: ${solanaBalance.toFixed(4)} SOL`);
             return;
         }
 
         console.log(`Selecting seat: ${seat.code}`);
         setSelectedSeat(seat.code);
-        onSeatSelected(seat.code);
+        onSeatSelected(seat.seatNumberCode);  // Pass only the seat number part
     };
 
-    // Handler refresh manual
+    // Handle manual refresh
     const handleRefresh = async () => {
         if (loadingRef.current) return;
 
@@ -296,7 +349,7 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
         return (
             <div className="flex justify-center items-center py-8">
                 <LoadingSpinner />
-                <span className="ml-2 text-gray-300">Memuat layout kursi...</span>
+                <span className="ml-2 text-gray-300">Loading seat layout...</span>
             </div>
         );
     }
@@ -306,24 +359,30 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
         return (
             <div className="bg-red-500/10 border border-red-500 rounded-lg p-4">
                 <p className="text-red-500 text-sm">{error}</p>
+                <button
+                    onClick={() => setError('')}
+                    className="mt-2 text-xs text-gray-300 hover:text-white"
+                >
+                    Close
+                </button>
             </div>
         );
     }
 
-    // Render jika tidak ada konser atau tipe tiket yang dipilih
+    // Render if no concert or ticket type selected
     if (!ticketType || !selectedConcert) {
         return (
             <div className="text-center py-4">
-                <p className="text-gray-400">Silakan pilih konser dan tipe tiket terlebih dahulu</p>
+                <p className="text-gray-400">Please select a concert and ticket type first</p>
             </div>
         );
     }
 
-    // Render jika tidak ada kursi yang tersedia
+    // Render if no seats available
     if (availableSeats.length === 0) {
         return (
             <div className="text-center py-4">
-                <p className="text-gray-400">Tidak ada kursi tersedia untuk kategori ini</p>
+                <p className="text-gray-400">No seats available for this category</p>
             </div>
         );
     }
@@ -332,7 +391,7 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
     const section = selectedConcert.sections.find(s => s.name === ticketType);
     const price = section ? section.price : 0;
 
-    // Kelompokkan kursi berdasarkan baris untuk tampilan lebih baik
+    // Group seats by row for better display
     const seatsByRow = [];
     for (let r = 0; r < rows; r++) {
         seatsByRow.push(availableSeats.filter(seat => seat.row === r));
@@ -340,25 +399,25 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
 
     return (
         <div className="seat-selector">
-            {/* Informasi Harga dan Saldo */}
+            {/* Price and Balance Info */}
             <div className="bg-gray-800/50 p-3 rounded-lg mb-4 border border-purple-900/30">
                 <div className="flex justify-between items-center mb-2">
-                    <span className="text-gray-300 text-sm">Harga Tiket:</span>
+                    <span className="text-gray-300 text-sm">Ticket Price:</span>
                     <span className="text-purple-400 font-medium">{price} SOL</span>
                 </div>
                 <div className="flex justify-between items-center mb-2">
-                    <span className="text-gray-300 text-sm">Saldo Wallet:</span>
+                    <span className="text-gray-300 text-sm">Wallet Balance:</span>
                     <span className={`${solanaBalance < price ? 'text-red-400' : 'text-green-400'} font-medium`}>
                         {solanaBalance.toFixed(4)} SOL
                     </span>
                 </div>
                 <div className="flex justify-between items-center">
                     <div className="flex gap-2 items-center">
-                        <span className="text-gray-300 text-sm">Kursi Tersedia:</span>
+                        <span className="text-gray-300 text-sm">Available Seats:</span>
                         <button
                             onClick={handleRefresh}
                             className="text-xs bg-gray-700 hover:bg-gray-600 p-1 rounded"
-                            title="Refresh kursi tersedia"
+                            title="Refresh available seats"
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -371,29 +430,33 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
                 </div>
                 {solanaBalance < price && (
                     <div className="mt-2 text-xs text-red-400">
-                        Saldo tidak mencukupi untuk membeli tiket ini
+                        Insufficient balance to purchase this ticket
                     </div>
                 )}
             </div>
 
             {/* Stage */}
             <div className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-center py-2 mb-4 rounded-lg">
-                <span className="text-sm font-medium">PANGGUNG</span>
+                <span className="text-sm font-medium">STAGE</span>
             </div>
 
             {/* Seat Legend */}
-            <div className="flex justify-center mb-4 space-x-6">
+            <div className="flex justify-center mb-4 space-x-4">
                 <div className="flex items-center">
                     <div className="w-4 h-4 bg-gray-700 rounded-sm mr-2"></div>
-                    <span className="text-gray-400 text-xs">Tersedia</span>
+                    <span className="text-gray-400 text-xs">Available</span>
                 </div>
                 <div className="flex items-center">
                     <div className="w-4 h-4 bg-purple-600 rounded-sm mr-2"></div>
-                    <span className="text-gray-400 text-xs">Dipilih</span>
+                    <span className="text-gray-400 text-xs">Selected</span>
                 </div>
                 <div className="flex items-center">
                     <div className="w-4 h-4 bg-red-500/50 rounded-sm mr-2"></div>
-                    <span className="text-gray-400 text-xs">Terjual</span>
+                    <span className="text-gray-400 text-xs">Sold</span>
+                </div>
+                <div className="flex items-center">
+                    <div className="w-4 h-4 bg-green-500/50 rounded-sm mr-2"></div>
+                    <span className="text-gray-400 text-xs">Your Seats</span>
                 </div>
             </div>
 
@@ -415,14 +478,20 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
                                 className={`
                                     w-6 h-6 flex items-center justify-center rounded-sm text-xs
                                     transition-all duration-200 
-                                    ${seat.isMinted
-                                        ? 'bg-red-500/50 text-gray-200 cursor-not-allowed'
-                                        : selectedSeat === seat.code
-                                            ? 'bg-purple-600 text-white cursor-pointer transform hover:scale-110'
-                                            : 'bg-gray-700 text-gray-300 cursor-pointer hover:bg-gray-600'
+                                    ${seat.isOwned
+                                        ? 'bg-green-500/50 text-white cursor-not-allowed border border-green-300'
+                                        : seat.isMinted
+                                            ? 'bg-red-500/50 text-gray-200 cursor-not-allowed'
+                                            : selectedSeat === seat.code
+                                                ? 'bg-purple-600 text-white cursor-pointer transform hover:scale-110'
+                                                : 'bg-gray-700 text-gray-300 cursor-pointer hover:bg-gray-600'
                                     }
                                 `}
-                                title={`${seat.code} ${seat.isMinted ? '(Sudah Terjual)' : ''}`}
+                                title={`${seat.code} ${seat.isOwned
+                                    ? '(Your Seat)'
+                                    : seat.isMinted
+                                        ? '(Already Sold)'
+                                        : ''}`}
                             >
                                 {seat.col + 1}
                             </div>
@@ -435,7 +504,7 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
             <div className="grid grid-cols-3 gap-2 text-center mt-4">
                 {Array.from({ length: Math.min(rows, 9) }).map((_, index) => (
                     <div key={index} className="text-xs text-gray-400">
-                        Baris {String.fromCharCode(65 + index)}
+                        Row {String.fromCharCode(65 + index)}
                     </div>
                 ))}
             </div>
@@ -444,18 +513,18 @@ const SeatSelector = ({ ticketType, concertId, selectedConcert, onSeatSelected, 
             {selectedSeat && (
                 <div className="mt-4 text-center">
                     <button
-                        onClick={() => onSeatSelected(selectedSeat)}
+                        onClick={() => onSeatSelected(selectedSeat.split('-')[1])}
                         className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-md text-sm transition-colors"
                         disabled={solanaBalance < price}
                     >
-                        Pilih Kursi {selectedSeat}
+                        Select Seat {selectedSeat.split('-')[1]}
                     </button>
                 </div>
             )}
 
             {/* Auto-refresh notification */}
             <div className="mt-6 text-center">
-                <p className="text-xs text-gray-500">Tampilan kursi disegarkan otomatis setiap 10 detik</p>
+                <p className="text-xs text-gray-500">Seat display automatically refreshes every 10 seconds</p>
             </div>
         </div>
     );

@@ -1,4 +1,3 @@
-//components/admin/AdminConcertApproval.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import AuthService from '../../services/AuthService';
@@ -24,6 +23,7 @@ const AdminConcertApproval = () => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [authStatus, setAuthStatus] = useState({ token: null, isAdmin: false });
     const [refreshInterval, setRefreshInterval] = useState(null);
+    const [pendingConcertsList, setPendingConcerts] = useState([]);
 
     // Ref untuk mencegah duplikasi loading
     const loadingRef = useRef(false);
@@ -109,21 +109,91 @@ const AdminConcertApproval = () => {
         try {
             // Make sure we have a token
             if (!AuthService.getToken()) {
+                console.log("No auth token, attempting to login");
                 await AuthService.loginTest();
             }
 
-            // Gunakan fungsi dari Context
-            await loadAdminPendingConcerts();
+            console.log("Fetching pending concerts...");
+
+            // Try different methods to get pending concerts
+            let concertData = [];
+
+            try {
+                // Method 1: Use ApiService if available
+                if (typeof ApiService.getPendingConcerts === 'function') {
+                    console.log("Using ApiService.getPendingConcerts");
+                    concertData = await ApiService.getPendingConcerts();
+                }
+                // Method 2: Use context function if available
+                else if (typeof loadAdminPendingConcerts === 'function') {
+                    console.log("Using loadAdminPendingConcerts from context");
+                    await loadAdminPendingConcerts();
+                    concertData = pendingConcerts;
+                }
+                // Method 3: Direct fetch
+                else {
+                    console.log("Using direct fetch for pending concerts");
+                    const token = AuthService.getToken();
+                    const response = await fetch('http://localhost:5000/api/concerts/pending', {
+                        headers: {
+                            'x-auth-token': token
+                        }
+                    });
+
+                    if (response.ok) {
+                        concertData = await response.json();
+                    } else {
+                        throw new Error(`API returned ${response.status}`);
+                    }
+                }
+            } catch (apiError) {
+                console.error("Error fetching from API:", apiError);
+
+                // Try the admin endpoint instead
+                try {
+                    console.log("Trying admin endpoint instead");
+                    const token = AuthService.getToken();
+                    const response = await fetch('http://localhost:5000/api/admin/concerts/pending', {
+                        headers: {
+                            'x-auth-token': token
+                        }
+                    });
+
+                    if (response.ok) {
+                        concertData = await response.json();
+                    } else {
+                        throw new Error(`Admin API returned ${response.status}`);
+                    }
+                } catch (adminApiError) {
+                    console.error("Admin API error:", adminApiError);
+
+                    // Fall back to localStorage
+                    const cachedConcerts = JSON.parse(localStorage.getItem('pendingConcerts') || '[]');
+                    console.log("Falling back to localStorage, found", cachedConcerts.length, "concerts");
+                    concertData = cachedConcerts;
+                }
+            }
+
+            console.log("Pending concerts loaded:", concertData.length);
+            setPendingConcerts(Array.isArray(concertData) ? concertData : []);
 
             if (!silent) setLoading(false);
             loadingRef.current = false;
 
             // Reset selected concert jika tidak ada lagi dalam daftar
-            if (selectedConcert && !pendingConcerts.find(c => c.id === selectedConcert._id)) {
+            if (selectedConcert && !concertData.find(c =>
+            (c._id === selectedConcert._id || c.id === selectedConcert._id ||
+                c._id === selectedConcert.id || c.id === selectedConcert.id)
+            )) {
                 setSelectedConcert(null);
             }
+
+            // Format data for display
+            if (Array.isArray(concertData) && concertData.length > 0) {
+                console.log("Formatted pending concerts:", concertData.length);
+            }
         } catch (err) {
-            console.error('Error fetching pending concerts:', err);
+            console.error('Error loading pending concerts:', err);
             setError(`Failed to load pending concerts: ${err.message}`);
             if (!silent) setLoading(false);
             loadingRef.current = false;
@@ -132,6 +202,7 @@ const AdminConcertApproval = () => {
 
     // Handle concert selection
     const handleSelectConcert = (concert) => {
+        console.log("Selected concert:", concert);
         setSelectedConcert(concert);
         setFeedback('');
         setRequestInfo('');
@@ -140,26 +211,100 @@ const AdminConcertApproval = () => {
 
     // Handle approve concert
     const handleApproveConcert = async () => {
-        if (!selectedConcert) return;
+        if (!selectedConcert) {
+            setError("No concert selected");
+            return;
+        }
 
         try {
             setIsSubmitting(true);
             setError('');
 
-            // Gunakan fungsi dari Context
-            await approveConcert(selectedConcert._id || selectedConcert.id, feedback || 'Approved');
+            // Ensure we have the full ID
+            const concertId = selectedConcert._id || selectedConcert.id;
+            console.log(`Approving concert: ${concertId} with feedback: ${feedback || 'Approved'}`);
 
-            // Refresh daftar setelah approval
-            await loadPendingConcerts();
+            // Direct API call to avoid any context issues
+            try {
+                const token = AuthService.getToken();
+                if (!token) {
+                    throw new Error("No authentication token found");
+                }
 
-            // Reset selected concert karena sudah diapprove
-            setSelectedConcert(null);
+                // Try the approve endpoint
+                const response = await fetch(`http://localhost:5000/api/concerts/${concertId}/approve`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-auth-token': token
+                    },
+                    body: JSON.stringify({ feedback: feedback || 'Approved' })
+                });
 
-            // Setelah approval, bersihkan cache agar frontend diperbarui
-            ApiService.clearConcertCache();
+                console.log("Approve concert response status:", response.status);
 
-            // Show success message
-            alert('Concert approved successfully!');
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.msg || `Server returned ${response.status}`);
+                }
+
+                // If successful, clear caches and update UI
+                if (typeof ApiService.clearConcertCache === 'function') {
+                    ApiService.clearConcertCache();
+                }
+
+                if (typeof ApiService.clearPendingConcertsCache === 'function') {
+                    ApiService.clearPendingConcertsCache();
+                }
+
+                // Refresh the list after successful approval
+                await loadPendingConcerts();
+
+                // Reset selected concert
+                setSelectedConcert(null);
+
+                // Show success message
+                alert('Concert approved successfully!');
+
+            } catch (apiError) {
+                console.error("Error with first approve endpoint:", apiError);
+
+                // Try alternative admin endpoint
+                try {
+                    const token = AuthService.getToken();
+                    const response = await fetch(`http://localhost:5000/api/admin/concerts/${concertId}/approve`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-auth-token': token
+                        },
+                        body: JSON.stringify({ feedback: feedback || 'Approved' })
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.msg || `Admin API returned ${response.status}`);
+                    }
+
+                    // If successful, clear caches and update UI
+                    if (typeof ApiService.clearConcertCache === 'function') {
+                        ApiService.clearConcertCache();
+                    }
+
+                    // Refresh the list after successful approval
+                    await loadPendingConcerts();
+
+                    // Reset selected concert
+                    setSelectedConcert(null);
+
+                    // Show success message
+                    alert('Concert approved successfully (via admin API)!');
+
+                } catch (adminApiError) {
+                    console.error("Error with admin approve endpoint:", adminApiError);
+                    throw adminApiError; // Re-throw to be caught by outer try/catch
+                }
+            }
         } catch (err) {
             console.error('Error approving concert:', err);
             setError(`Failed to approve concert: ${err.message}`);
@@ -170,7 +315,10 @@ const AdminConcertApproval = () => {
 
     // Handle reject concert
     const handleRejectConcert = async () => {
-        if (!selectedConcert) return;
+        if (!selectedConcert) {
+            setError("No concert selected");
+            return;
+        }
 
         if (!feedback.trim()) {
             setError('Please provide feedback explaining the rejection reason');
@@ -181,17 +329,82 @@ const AdminConcertApproval = () => {
             setIsSubmitting(true);
             setError('');
 
-            // Gunakan fungsi dari Context
-            await rejectConcert(selectedConcert._id || selectedConcert.id, feedback);
+            // Ensure we have the full ID
+            const concertId = selectedConcert._id || selectedConcert.id;
+            console.log(`Rejecting concert: ${concertId} with feedback: ${feedback}`);
 
-            // Refresh daftar
-            await loadPendingConcerts();
+            try {
+                // Direct API call to reject concert
+                const token = AuthService.getToken();
+                if (!token) {
+                    throw new Error("No authentication token found");
+                }
 
-            // Reset selected concert karena sudah ditolak
-            setSelectedConcert(null);
+                // Try the standard reject endpoint
+                const response = await fetch(`http://localhost:5000/api/concerts/${concertId}/reject`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-auth-token': token
+                    },
+                    body: JSON.stringify({ feedback })
+                });
 
-            // Show success message
-            alert('Concert rejected successfully!');
+                console.log("Reject concert response status:", response.status);
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.msg || `Server returned ${response.status}`);
+                }
+
+                // If successful, clear caches and update UI
+                if (typeof ApiService.clearPendingConcertsCache === 'function') {
+                    ApiService.clearPendingConcertsCache();
+                }
+
+                // Refresh the list after successful rejection
+                await loadPendingConcerts();
+
+                // Reset selected concert
+                setSelectedConcert(null);
+
+                // Show success message
+                alert('Concert rejected successfully!');
+
+            } catch (apiError) {
+                console.error("Error with first reject endpoint:", apiError);
+
+                // Try alternative admin endpoint
+                try {
+                    const token = AuthService.getToken();
+                    const response = await fetch(`http://localhost:5000/api/admin/concerts/${concertId}/reject`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-auth-token': token
+                        },
+                        body: JSON.stringify({ feedback })
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.msg || `Admin API returned ${response.status}`);
+                    }
+
+                    // Refresh the list after successful rejection
+                    await loadPendingConcerts();
+
+                    // Reset selected concert
+                    setSelectedConcert(null);
+
+                    // Show success message
+                    alert('Concert rejected successfully (via admin API)!');
+
+                } catch (adminApiError) {
+                    console.error("Error with admin reject endpoint:", adminApiError);
+                    throw adminApiError; // Re-throw to be caught by outer try/catch
+                }
+            }
         } catch (err) {
             console.error('Error rejecting concert:', err);
             setError(`Failed to reject concert: ${err.message}`);
@@ -202,7 +415,10 @@ const AdminConcertApproval = () => {
 
     // Handle request more info
     const handleRequestInfo = async () => {
-        if (!selectedConcert) return;
+        if (!selectedConcert) {
+            setError("No concert selected");
+            return;
+        }
 
         if (!requestInfo.trim()) {
             setError('Please specify what additional information is needed');
@@ -213,17 +429,82 @@ const AdminConcertApproval = () => {
             setIsSubmitting(true);
             setError('');
 
-            // Gunakan fungsi dari Context
-            await requestMoreInfo(selectedConcert._id || selectedConcert.id, requestInfo);
+            // Ensure we have the full ID
+            const concertId = selectedConcert._id || selectedConcert.id;
+            console.log(`Requesting more info for concert: ${concertId} - Message: ${requestInfo}`);
 
-            // Refresh daftar
-            await loadPendingConcerts();
+            try {
+                // Direct API call to request more info
+                const token = AuthService.getToken();
+                if (!token) {
+                    throw new Error("No authentication token found");
+                }
 
-            // Reset form
-            setRequestInfo('');
+                // Try the standard endpoint
+                const response = await fetch(`http://localhost:5000/api/concerts/${concertId}/request-info`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-auth-token': token
+                    },
+                    body: JSON.stringify({ message: requestInfo })
+                });
 
-            // Show success message
-            alert('Information request sent successfully!');
+                console.log("Request info response status:", response.status);
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.msg || `Server returned ${response.status}`);
+                }
+
+                // If successful, clear caches and update UI
+                if (typeof ApiService.clearPendingConcertsCache === 'function') {
+                    ApiService.clearPendingConcertsCache();
+                }
+
+                // Refresh the list after successful request
+                await loadPendingConcerts();
+
+                // Reset form
+                setRequestInfo('');
+
+                // Show success message
+                alert('Information request sent successfully!');
+
+            } catch (apiError) {
+                console.error("Error with first request-info endpoint:", apiError);
+
+                // Try alternative admin endpoint
+                try {
+                    const token = AuthService.getToken();
+                    const response = await fetch(`http://localhost:5000/api/admin/concerts/${concertId}/request-info`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-auth-token': token
+                        },
+                        body: JSON.stringify({ message: requestInfo })
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.msg || `Admin API returned ${response.status}`);
+                    }
+
+                    // Refresh the list after successful request
+                    await loadPendingConcerts();
+
+                    // Reset form
+                    setRequestInfo('');
+
+                    // Show success message
+                    alert('Information request sent successfully (via admin API)!');
+
+                } catch (adminApiError) {
+                    console.error("Error with admin request-info endpoint:", adminApiError);
+                    throw adminApiError; // Re-throw to be caught by outer try/catch
+                }
+            }
         } catch (err) {
             console.error('Error requesting information:', err);
             setError(`Failed to request information: ${err.message}`);
@@ -245,6 +526,68 @@ const AdminConcertApproval = () => {
         }
     };
 
+    // Handle direct fetch
+    const handleDirectFetch = async () => {
+        try {
+            setLoading(true);
+            setError('');
+
+            const token = AuthService.getToken();
+            if (!token) {
+                throw new Error("No authentication token found");
+            }
+
+            console.log("Attempting direct fetch of pending concerts...");
+
+            // Try multiple endpoints
+            let response;
+            let concertData = [];
+
+            try {
+                // First try /concerts/pending
+                response = await fetch('http://localhost:5000/api/concerts/pending', {
+                    headers: {
+                        'x-auth-token': token
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API returned ${response.status}`);
+                }
+
+                concertData = await response.json();
+
+            } catch (firstError) {
+                console.log("First endpoint failed, trying admin endpoint...");
+
+                // Then try /admin/concerts/pending
+                response = await fetch('http://localhost:5000/api/admin/concerts/pending', {
+                    headers: {
+                        'x-auth-token': token
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Admin API returned ${response.status}`);
+                }
+
+                concertData = await response.json();
+            }
+
+            console.log("Pending concerts fetched directly:", concertData.length);
+            setPendingConcerts(Array.isArray(concertData) ? concertData : []);
+
+            // Save to localStorage as backup
+            localStorage.setItem('pendingConcerts', JSON.stringify(concertData));
+
+        } catch (err) {
+            console.error("Direct fetch failed:", err);
+            setError(`Direct fetch failed: ${err.message}`);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     // Format date for display
     const formatDate = (dateString) => {
         try {
@@ -254,7 +597,7 @@ const AdminConcertApproval = () => {
         }
     };
 
-    if (loading && pendingConcerts.length === 0) {
+    if (loading && pendingConcertsList.length === 0) {
         return (
             <div className="flex justify-center items-center min-h-[300px]">
                 <LoadingSpinner />
@@ -285,12 +628,20 @@ const AdminConcertApproval = () => {
             {error && (
                 <div className="bg-red-900/20 border border-red-500 rounded-lg p-4 mb-6">
                     <p className="text-red-400">{error}</p>
-                    <button
-                        onClick={handleRefresh}
-                        className="mt-2 px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700"
-                    >
-                        Try Again
-                    </button>
+                    <div className="mt-2 flex space-x-2">
+                        <button
+                            onClick={handleRefresh}
+                            className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700"
+                        >
+                            Try Again
+                        </button>
+                        <button
+                            onClick={handleDirectFetch}
+                            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                        >
+                            Direct Fetch
+                        </button>
+                    </div>
                 </div>
             )}
 
@@ -298,13 +649,22 @@ const AdminConcertApproval = () => {
             <div className="bg-gray-800 p-6 rounded-lg">
                 <div className="flex justify-between items-center mb-4">
                     <h2 className="text-xl font-semibold text-white">Pending Concerts</h2>
-                    <button
-                        onClick={() => loadPendingConcerts()}
-                        disabled={loading}
-                        className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50"
-                    >
-                        {loading ? 'Loading...' : 'Refresh'}
-                    </button>
+                    <div className="flex space-x-2">
+                        <button
+                            onClick={() => loadPendingConcerts()}
+                            disabled={loading}
+                            className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50"
+                        >
+                            {loading ? 'Loading...' : 'Refresh'}
+                        </button>
+                        <button
+                            onClick={handleDirectFetch}
+                            disabled={loading}
+                            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                        >
+                            Direct Fetch
+                        </button>
+                    </div>
                 </div>
 
                 {loading ? (
@@ -312,7 +672,7 @@ const AdminConcertApproval = () => {
                         <div className="inline-block w-8 h-8 border-4 border-t-purple-500 border-gray-200 rounded-full animate-spin"></div>
                         <p className="mt-2 text-gray-400">Loading pending concerts...</p>
                     </div>
-                ) : pendingConcerts.length === 0 ? (
+                ) : pendingConcertsList.length === 0 ? (
                     <div className="text-center py-10">
                         <p className="text-gray-400">No pending concerts to review.</p>
                     </div>
@@ -320,7 +680,7 @@ const AdminConcertApproval = () => {
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         {/* Left panel - Concert list */}
                         <div className="lg:col-span-1 bg-gray-700 p-4 rounded-lg max-h-[600px] overflow-y-auto">
-                            {pendingConcerts.map(concert => (
+                            {pendingConcertsList.map(concert => (
                                 <div
                                     key={concert._id || concert.id}
                                     onClick={() => handleSelectConcert(concert)}
@@ -332,7 +692,7 @@ const AdminConcertApproval = () => {
                                     <p className="text-sm text-gray-300">Venue: {concert.venue}</p>
                                     <p className="text-sm text-gray-300">Date: {formatDate(concert.date)}</p>
                                     <div className="flex justify-between items-center mt-2">
-                                        <span className="text-xs text-gray-400">By: {concert.creator.substring(0, 8)}...</span>
+                                        <span className="text-xs text-gray-400">By: {concert.creator ? concert.creator.substring(0, 8) + '...' : 'Unknown'}</span>
                                         <span className={`text-xs px-2 py-1 rounded-full ${concert.status === 'info_requested'
                                             ? 'bg-yellow-800 text-yellow-200'
                                             : 'bg-blue-800 text-blue-200'
@@ -340,6 +700,8 @@ const AdminConcertApproval = () => {
                                             {concert.status === 'info_requested' ? 'Info Requested' : 'Pending'}
                                         </span>
                                     </div>
+                                    {/* Debug info */}
+                                    <p className="text-xs text-gray-500 mt-1">ID: {concert._id || concert.id}</p>
                                 </div>
                             ))}
                         </div>
@@ -360,6 +722,11 @@ const AdminConcertApproval = () => {
                                             }`}>
                                             {selectedConcert.status === 'info_requested' ? 'Info Requested' : 'Pending'}
                                         </span>
+                                    </div>
+
+                                    {/* Debug ID information */}
+                                    <div className="bg-gray-800/50 p-2 rounded mb-4">
+                                        <p className="text-xs text-gray-400">Concert ID: {selectedConcert._id || selectedConcert.id}</p>
                                     </div>
 
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
