@@ -541,61 +541,52 @@ class ApiService {
  */
     async mintTicket(mintData) {
         try {
-            // Mulai timer performa
-            const startTime = performance.now();
-            const performanceSteps = [];
-
-            // Fungsi untuk mencatat langkah performa
-            const recordStep = (stepName, startTs) => {
-                const now = performance.now();
-                const duration = startTs ? (now - startTs) / 1000 : 0;
-
-                performanceSteps.push({
-                    name: stepName,
-                    time: duration,
-                    timestamp: now
-                });
-
-                return now;
-            };
-
-            // Catat langkah awal
-            let stepTime = recordStep("Init client", startTime);
-
-            // Log untuk debugging
-            console.log("===== MINT TICKET API CALL =====");
+            console.log("===== ENHANCED MINT TICKET API CALL =====");
             console.log("Minting ticket with data:", JSON.stringify(mintData, null, 2));
 
             // Get auth token
             const token = localStorage.getItem('auth_token');
             if (!token) {
                 console.error("No auth token available");
-                return { success: false, msg: 'Authentication required for minting tickets' };
+                return {
+                    success: false,
+                    msg: 'Authentication required for minting tickets'
+                };
             }
 
             // Basic data validation
             if (!mintData.concertId) {
                 console.error("Missing concertId in mintData");
-                return { success: false, msg: 'Concert ID is required' };
+                return {
+                    success: false,
+                    msg: 'Concert ID is required'
+                };
             }
 
             if (!mintData.sectionName) {
                 console.error("Missing sectionName in mintData");
-                return { success: false, msg: 'Section name is required' };
+                return {
+                    success: false,
+                    msg: 'Section name is required'
+                };
             }
 
-            // Catat waktu validasi
-            stepTime = recordStep("Client validation", stepTime);
+            if (!mintData.seatNumber) {
+                console.error("Missing seatNumber in mintData");
+                return {
+                    success: false,
+                    msg: 'Seat number is required'
+                };
+            }
 
             // Create request payload
             const payload = {
                 concertId: mintData.concertId,
                 sectionName: mintData.sectionName,
-                seatNumber: mintData.seatNumber || null,
+                seatNumber: mintData.seatNumber,
                 quantity: mintData.quantity || 1,
                 transactionSignature: mintData.transactionSignature || null,
                 receiverAddress: mintData.receiverAddress || null,
-                // Tambahkan flag untuk meminta server mengembalikan metrik performa
                 includePerformanceMetrics: true
             };
 
@@ -603,15 +594,9 @@ class ApiService {
             console.log("Using auth token:", token.substring(0, 15) + "...");
             console.log("Endpoint:", `${this.baseUrl}/tickets/mint`);
 
-            // Catat waktu persiapan request
-            stepTime = recordStep("Request preparation", stepTime);
-
             // Setup request with timeout
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-            // Catat waktu awal request
-            const fetchStartTime = performance.now();
 
             try {
                 // Make the API request
@@ -628,117 +613,142 @@ class ApiService {
                 // Clear timeout
                 clearTimeout(timeoutId);
 
-                // Catat waktu selesai network request
-                stepTime = recordStep("Network request", fetchStartTime);
-
-                // Log response status
+                // Log response details for debugging
                 console.log(`Mint ticket API response status: ${response.status}`);
+                console.log(`Response headers:`, response.headers);
 
                 // Handle non-200 responses
                 if (!response.ok) {
                     let errorMessage = `Failed to mint ticket (Status: ${response.status})`;
+                    let errorDetails = null;
 
                     try {
                         // Try to get detailed error message from response
                         const errorData = await response.json();
                         console.error("API Error response:", errorData);
 
-                        if (errorData && errorData.msg) {
-                            errorMessage = `${errorData.msg} (Status: ${response.status})`;
+                        if (errorData) {
+                            errorMessage = errorData.msg || errorData.message || errorMessage;
+                            errorDetails = errorData;
                         }
                     } catch (parseErr) {
-                        console.error("Could not parse error response:", parseErr);
+                        console.error("Could not parse error response as JSON:", parseErr);
 
-                        // Use text response as fallback
+                        // Try to get text response as fallback
                         try {
                             const errorText = await response.text();
                             console.error("Raw error response:", errorText);
+                            if (errorText) {
+                                errorMessage = `${errorMessage} - ${errorText}`;
+                            }
                         } catch (textErr) {
-                            console.error("Could not get text from error response");
+                            console.error("Could not get text from error response:", textErr);
                         }
                     }
 
-                    throw new Error(errorMessage);
+                    // Return structured error response
+                    return {
+                        success: false,
+                        msg: errorMessage,
+                        status: response.status,
+                        error: errorDetails
+                    };
                 }
 
-                // Catat waktu mulai parse JSON
-                const parseStartTime = performance.now();
-
                 // Parse successful response
-                const result = await response.json();
+                let result;
+                try {
+                    result = await response.json();
+                    console.log("Mint ticket successful, raw response:", result);
+                } catch (parseErr) {
+                    console.error("Error parsing successful response:", parseErr);
+                    return {
+                        success: false,
+                        msg: 'Server returned invalid response format',
+                        error: parseErr.message
+                    };
+                }
 
-                // Catat waktu parse JSON
-                stepTime = recordStep("Response parsing", parseStartTime);
+                // CRITICAL: Validate response structure
+                if (!result) {
+                    console.error("Empty response from server");
+                    return {
+                        success: false,
+                        msg: 'Server returned empty response'
+                    };
+                }
 
-                console.log("Mint ticket successful:", result);
+                // Check if response indicates success
+                if (result.success === false) {
+                    console.error("Server explicitly returned success: false", result);
+                    return {
+                        success: false,
+                        msg: result.msg || result.error || 'Server reported mint failure',
+                        error: result
+                    };
+                }
+
+                // If no explicit success flag, check for ticket data
+                if (!result.success && !result.ticket) {
+                    console.error("Response missing both success flag and ticket data", result);
+                    return {
+                        success: false,
+                        msg: 'Invalid response structure from server',
+                        error: result
+                    };
+                }
 
                 // Clear all related caches for data freshness
                 this.clearAllTicketCaches();
                 this.clearConcertCache();
 
-                // Catat waktu pembersihan cache
-                stepTime = recordStep("Cache clearing", stepTime);
+                console.log("Mint ticket processed successfully, returning result");
 
-                // Hitung total waktu
-                const endTime = performance.now();
-                const totalTime = (endTime - startTime) / 1000; // dalam detik
-
-                // Hitung persentase waktu untuk setiap langkah
-                let totalStepTime = 0;
-                performanceSteps.forEach(step => {
-                    totalStepTime += step.time;
-                });
-
-                performanceSteps.forEach(step => {
-                    step.percentage = (step.time / totalStepTime) * 100;
-                });
-
-                // Tambahkan metrik performa ke hasil
-                const enhancedResult = {
-                    ...result,
-                    clientPerformance: {
-                        totalTime,
-                        steps: performanceSteps,
-                        timestamp: new Date().toISOString()
-                    }
+                // Ensure response has success flag
+                return {
+                    success: true,
+                    ...result
                 };
 
-                // Gabungkan dengan metrik server jika tersedia
-                if (result.serverPerformance) {
-                    enhancedResult.performance = {
-                        client: enhancedResult.clientPerformance,
-                        server: result.serverPerformance,
-                        total: {
-                            totalTime: totalTime + (result.serverPerformance.totalTime || 0),
-                            note: "Total time includes network latency"
-                        }
-                    };
-                }
-
-                return enhancedResult;
             } catch (fetchError) {
                 // Clear timeout if not already done
                 clearTimeout(timeoutId);
 
-                // Catat error step
-                recordStep(`Fetch error: ${fetchError.message}`, stepTime);
+                console.error("Network/fetch error during mint:", fetchError);
 
                 // Handle specific fetch errors
                 if (fetchError.name === 'AbortError') {
-                    console.error("Request timeout during mint");
-                    throw new Error('Request timed out while minting ticket. Please try again.');
+                    return {
+                        success: false,
+                        msg: 'Request timed out while minting ticket. Please check your connection and try again.',
+                        error: 'timeout'
+                    };
                 }
 
+                if (fetchError.message.includes('Failed to fetch')) {
+                    return {
+                        success: false,
+                        msg: 'Network error. Please check your internet connection and try again.',
+                        error: 'network_error'
+                    };
+                }
+
+                // Re-throw other fetch errors
                 throw fetchError;
             }
-        } catch (error) {
-            console.error('Error in ApiService.mintTicket:', error);
 
-            // Return structured error response
+        } catch (error) {
+            console.error('Critical error in ApiService.mintTicket:', error);
+
+            // Return structured error response for any uncaught errors
             return {
                 success: false,
                 msg: error.message || 'Unknown error during mint process',
-                error: error
+                error: {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack
+                }
             };
         }
     }
