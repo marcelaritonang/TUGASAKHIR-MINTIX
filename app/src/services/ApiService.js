@@ -1,8 +1,8 @@
 // src/services/ApiService.js - Enhanced version with improved blockchain methods
 class ApiService {
     constructor() {
-        // Use variable from .env if available or default to localhost
-        this.baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+        // FIX: HARDCODE base URL untuk prevent connection issues
+        this.baseUrl = 'http://localhost:5000/api';
 
         // Cache for storing data
         this.cache = {
@@ -14,17 +14,19 @@ class ApiService {
                 data: null,
                 timestamp: 0
             },
-            mintedSeats: {}, // To store minted seats data per concertId
-            lastFetch: {},   // To record when data was last fetched
-            transactions: {} // To store blockchain transaction data
+            mintedSeats: {},
+            lastFetch: {},
+            transactions: {}
         };
 
-        // Cache duration in milliseconds
-        this.concertCacheDuration = 15000;
+        // REDUCED cache duration to prevent stale data
+        this.concertCacheDuration = 30000; // 30 seconds instead of 15
         this.pendingConcertsCacheDuration = 10000;
         this.seatCacheDuration = 30000;
         this.transactionCacheDuration = 60000;
     }
+
+
 
     // Helper to get headers with token for JSON requests
     _getHeaders() {
@@ -88,214 +90,249 @@ class ApiService {
         // Remove from localStorage as well
         localStorage.removeItem('pendingConcerts');
     }
-    /**
- * Enhanced method to get concert with better caching and error handling
- */
-    async getConcert(id) {
-        try {
-            if (!id) {
-                console.error("Invalid ID:", id);
-                return null;
-            }
-
-            console.log(`Fetching concert: ${id}`);
-
-            // Normalize ID to string format to avoid comparison issues
-            const normalizedId = typeof id === 'string' ? id : id.toString();
-
-            // Create cache key for this specific concert
-            const cacheKey = `concert_${normalizedId}`;
-            const cachedConcert = localStorage.getItem(cacheKey);
-
-            if (cachedConcert) {
-                try {
-                    const parsed = JSON.parse(cachedConcert);
-                    const cacheAge = Date.now() - (parsed.timestamp || 0);
-
-                    // Use cache if less than 10 minutes old
-                    if (cacheAge < 600000) {
-                        console.log(`Using cached concert data for ${id}`);
-                        return parsed.data;
-                    }
-                } catch (e) {
-                    console.warn('Error parsing cached concert:', e);
-                }
-            }
-
-            // Check if we have it in concerts cache
-            if (this.cache.concerts.data) {
-                const cachedConcert = Array.isArray(this.cache.concerts.data) ?
-                    this.cache.concerts.data.find(c => {
-                        const cId = c._id || c.id;
-                        return cId === id || cId === normalizedId;
-                    }) : null;
-
-                if (cachedConcert) {
-                    console.log("Found concert in memory cache:", cachedConcert.name || 'unnamed');
-
-                    // Also update localStorage cache
-                    localStorage.setItem(cacheKey, JSON.stringify({
-                        timestamp: Date.now(),
-                        data: cachedConcert
-                    }));
-
-                    return cachedConcert;
-                }
-            }
-
-            // Log for debugging
-            console.log(`Cache miss for concert ${id}, fetching from API`);
-
-            // If not in cache, fetch from API with timeout and retries
-            let attempts = 0;
-            const maxAttempts = 3;
-            let lastError = null;
-
-            while (attempts < maxAttempts) {
-                attempts++;
-                try {
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-                    const response = await fetch(`${this.baseUrl}/concerts/${id}`, {
-                        signal: controller.signal
-                    });
-
-                    clearTimeout(timeoutId);
-
-                    // Handle 404 gracefully
-                    if (response.status === 404) {
-                        console.log(`Concert with ID ${id} not found`);
-                        return null;
-                    }
-
-                    // Handle rate limiting
-                    if (response.status === 429) {
-                        console.warn(`Rate limit hit when fetching concert (attempt ${attempts})`);
-                        // Wait with exponential backoff before retry
-                        const backoff = Math.min(1000 * Math.pow(1.5, attempts - 1), 5000);
-                        await new Promise(resolve => setTimeout(resolve, backoff));
-                        continue;
-                    }
-
-                    if (!response.ok) {
-                        throw new Error(`Failed to fetch concert details: ${response.status}`);
-                    }
-
-                    const data = await response.json();
-                    console.log("Concert fetched:", data.name || 'unnamed');
-
-                    // Cache in localStorage
-                    localStorage.setItem(cacheKey, JSON.stringify({
-                        timestamp: Date.now(),
-                        data: data
-                    }));
-
-                    return data;
-                } catch (err) {
-                    lastError = err;
-                    console.error(`Error fetching concert ${id} (attempt ${attempts}/${maxAttempts}):`, err.message);
-
-                    // For timeouts, retry immediately with shorter timeout
-                    if (err.name === 'AbortError') {
-                        console.warn('Concert fetch timed out');
-                        if (attempts < maxAttempts) {
-                            continue;
-                        }
-                    }
-
-                    // For other errors, retry with delay if not on final attempt
-                    if (attempts < maxAttempts) {
-                        await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
-                    } else {
-                        // Try to get from localStorage on final attempt, even if it's old
-                        const oldCache = localStorage.getItem(cacheKey);
-                        if (oldCache) {
-                            try {
-                                const parsed = JSON.parse(oldCache);
-                                console.log(`Using older cached concert data as fallback for ${id}`);
-                                return parsed.data;
-                            } catch (e) {
-                                // Ignore parsing errors
-                            }
-                        }
-
-                        // Finally, give up
-                        throw err;
-                    }
-                }
-            }
-
-            throw lastError || new Error(`Failed to fetch concert ${id} after multiple attempts`);
-        } catch (error) {
-            console.error(`Error fetching concert ${id}:`, error);
-            return null;
-        }
-    }
 
 
-    // GET concert by ID
     async getConcerts(forceRefresh = false) {
         try {
-            console.log("Fetching concerts" + (forceRefresh ? " (forced refresh)" : ""));
+            console.log("🎵 Fetching concerts" + (forceRefresh ? " (forced refresh)" : ""));
 
-            // Check if we have valid cache data and not forced to refresh
+            // Check cache ONLY if not forcing refresh
             const now = Date.now();
-            const cacheIsValid = !forceRefresh &&
-                this.cache.concerts.data &&
-                (now - this.cache.concerts.timestamp < this.concertCacheDuration);
-
-            if (cacheIsValid) {
+            if (!forceRefresh && this.cache.concerts.data &&
+                (now - this.cache.concerts.timestamp < this.concertCacheDuration)) {
                 console.log("Using cached concert data");
                 return this.cache.concerts.data;
             }
 
-            // Set timeout for request
+            // Fetch from API
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000);
+            const timeoutId = setTimeout(() => controller.abort(), 8000);
 
             try {
+                console.log(`Making request to: ${this.baseUrl}/concerts`);
+
                 const response = await fetch(`${this.baseUrl}/concerts`, {
-                    signal: controller.signal
+                    signal: controller.signal,
+                    headers: this._getHeaders()
                 });
 
                 clearTimeout(timeoutId);
 
                 if (!response.ok) {
-                    throw new Error(`Failed to fetch concerts: ${response.status}`);
+                    console.error(`Concert API returned ${response.status}`);
+                    throw new Error(`API Error: ${response.status}`);
                 }
 
                 const data = await response.json();
-                console.log(`Concerts fetched: ${Array.isArray(data.concerts) ? data.concerts.length : Array.isArray(data) ? data.length : 'no array'}`);
+                console.log("Raw concert data:", data);
 
-                // Store in cache with timestamp
-                const concertData = data.concerts || data;
+                // Handle different response formats
+                let concertData = [];
+                if (Array.isArray(data)) {
+                    concertData = data;
+                } else if (data.concerts && Array.isArray(data.concerts)) {
+                    concertData = data.concerts;
+                } else if (data.data && Array.isArray(data.data)) {
+                    concertData = data.data;
+                }
+
+                console.log(`✅ Processed ${concertData.length} concerts`);
+
+                // Update cache
                 this.cache.concerts.data = concertData;
                 this.cache.concerts.timestamp = now;
 
+                // 🚀 NEW: ALSO populate individual concert cache for MyTickets
+                if (!this.cache.concertDetails) {
+                    this.cache.concertDetails = {};
+                }
+
+                concertData.forEach(concert => {
+                    if (concert._id || concert.id) {
+                        const concertId = (concert._id || concert.id).toString();
+                        this.cache.concertDetails[concertId] = {
+                            data: concert,
+                            timestamp: now
+                        };
+                        console.log(`📦 Cached individual concert: ${concert.name} (ID: ${concertId})`);
+                    }
+                });
+
+                console.log(`✅ Pre-cached ${Object.keys(this.cache.concertDetails).length} individual concerts for MyTickets`);
+
                 return concertData;
+
+            } catch (fetchError) {
+                clearTimeout(timeoutId);
+                console.error("Concert fetch error:", fetchError.message);
+
+                // Return cached data if available
+                if (this.cache.concerts.data) {
+                    console.log("Returning cached data due to fetch error");
+                    return this.cache.concerts.data;
+                }
+
+                console.log("No cached data, returning empty array");
+                return [];
+            }
+
+        } catch (error) {
+            console.error('Critical error in getConcerts:', error);
+            return []; // Always return array to prevent crashes
+        }
+    }
+
+    async getConcert(concertId, forceRefresh = false) {
+        try {
+            console.log(`🎵 Getting concert by ID: ${concertId} (forceRefresh: ${forceRefresh})`);
+
+            if (!concertId) {
+                console.error("Missing concertId in getConcert");
+                return null;
+            }
+
+            // Normalize concertId to string
+            const normalizedConcertId = concertId.toString();
+
+            // Initialize individual concert cache if not exists
+            if (!this.cache.concertDetails) {
+                this.cache.concertDetails = {};
+            }
+
+            // Check individual cache first (unless forcing refresh)
+            const now = Date.now();
+            const cacheKey = normalizedConcertId;
+            const concertDetailCacheDuration = 60000; // 1 minute for individual concerts
+
+            if (!forceRefresh && this.cache.concertDetails[cacheKey]) {
+                const cachedConcert = this.cache.concertDetails[cacheKey];
+                const cacheAge = now - cachedConcert.timestamp;
+
+                if (cacheAge < concertDetailCacheDuration) {
+                    console.log(`✅ Using cached individual concert: ${cachedConcert.data?.name} (${cacheAge}ms old)`);
+                    return cachedConcert.data;
+                }
+            }
+
+            // 🚀 NEW: Check if concert exists in main concerts cache (from getConcerts)
+            if (this.cache.concerts.data && Array.isArray(this.cache.concerts.data)) {
+                const foundInMainCache = this.cache.concerts.data.find(concert =>
+                    (concert._id === normalizedConcertId) || (concert.id === normalizedConcertId)
+                );
+
+                if (foundInMainCache) {
+                    console.log(`✅ Found concert in main cache: ${foundInMainCache.name}`);
+
+                    // Cache in individual cache for future use
+                    this.cache.concertDetails[cacheKey] = {
+                        data: foundInMainCache,
+                        timestamp: now
+                    };
+
+                    return foundInMainCache;
+                } else {
+                    console.log(`🔍 Concert ${normalizedConcertId} not found in main cache, trying individual API call`);
+                }
+            }
+
+            // If not in cache, try individual API call
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+            try {
+                console.log(`📡 Fetching individual concert from API: ${this.baseUrl}/concerts/${normalizedConcertId}`);
+
+                const response = await fetch(`${this.baseUrl}/concerts/${normalizedConcertId}`, {
+                    headers: this._getHeaders(),
+                    signal: controller.signal
+                });
+
+                clearTimeout(timeoutId);
+
+                // Handle different response statuses
+                if (response.status === 404) {
+                    console.log(`❌ Concert ${normalizedConcertId} not found (404)`);
+                    // Cache the "not found" result to prevent repeated API calls
+                    this.cache.concertDetails[cacheKey] = {
+                        data: null,
+                        timestamp: now,
+                        notFound: true
+                    };
+                    return null;
+                }
+
+                if (!response.ok) {
+                    console.error(`❌ Concert API error: ${response.status}`);
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.msg || `API Error: ${response.status}`);
+                }
+
+                const responseData = await response.json();
+                console.log("Raw individual concert response:", responseData);
+
+                // Handle different response formats
+                let concertData = null;
+
+                if (responseData.success && responseData.concert) {
+                    concertData = responseData.concert;
+                } else if (responseData.success === false) {
+                    console.log(`❌ API returned success: false - ${responseData.msg}`);
+                    return null;
+                } else if (responseData._id || responseData.id) {
+                    // Direct concert object
+                    concertData = responseData;
+                } else {
+                    console.error("Unexpected response format:", responseData);
+                    return null;
+                }
+
+                if (concertData) {
+                    console.log(`✅ Successfully fetched individual concert: ${concertData.name}`);
+
+                    // Cache the result
+                    this.cache.concertDetails[cacheKey] = {
+                        data: concertData,
+                        timestamp: now
+                    };
+
+                    return concertData;
+                } else {
+                    console.log(`❌ No concert data in response`);
+                    return null;
+                }
+
             } catch (fetchError) {
                 clearTimeout(timeoutId);
 
                 if (fetchError.name === 'AbortError') {
-                    console.error("Concerts fetch timed out");
+                    console.error('❌ Individual concert fetch timed out');
+                } else {
+                    console.error('❌ Network error fetching individual concert:', fetchError);
                 }
 
-                throw fetchError;
+                // Check if we have cached data as fallback
+                if (this.cache.concertDetails[cacheKey] && this.cache.concertDetails[cacheKey].data) {
+                    console.log(`📦 Using stale cached concert as fallback`);
+                    return this.cache.concertDetails[cacheKey].data;
+                }
+
+                // Return null for individual concert failures
+                return null;
             }
+
         } catch (error) {
-            console.error('Error fetching concerts:', error);
+            console.error(`❌ Critical error in getConcert(${concertId}):`, error);
 
-            // If we have cached data, return it as fallback
-            if (this.cache.concerts.data) {
-                console.log("Returning cached concert data due to fetch error");
-                return this.cache.concerts.data;
+            // Final fallback: check if we have any cached data
+            const cacheKey = concertId.toString();
+            if (this.cache.concertDetails && this.cache.concertDetails[cacheKey] && this.cache.concertDetails[cacheKey].data) {
+                console.log(`📦 Using any available cached concert as final fallback`);
+                return this.cache.concertDetails[cacheKey].data;
             }
 
-            throw error;
+            return null;
         }
     }
-
     // GET ticket by ID
     async getTicket(ticketId) {
         try {
@@ -1777,7 +1814,45 @@ class ApiService {
             throw error;
         }
     }
+    async reserveSeat(seatData) {
+        try {
+            const response = await fetch(`${this.baseUrl}/tickets/reserve-seat`, {
+                method: 'POST',
+                headers: this._getHeaders(),
+                body: JSON.stringify(seatData)
+            });
 
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.msg || 'Failed to reserve seat');
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('Error reserving seat:', error);
+            throw error;
+        }
+    }
+
+    async releaseSeat(seatData) {
+        try {
+            const response = await fetch(`${this.baseUrl}/tickets/reserve-seat`, {
+                method: 'DELETE',
+                headers: this._getHeaders(),
+                body: JSON.stringify(seatData)
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.msg || 'Failed to release seat');
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('Error releasing seat:', error);
+            throw error;
+        }
+    }
     // Get royalty calculation
     async calculateRoyalty(ticketId, royaltyPercentage = 5) {
         try {
