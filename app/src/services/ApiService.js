@@ -1163,76 +1163,133 @@ class ApiService {
         }
     }
 
-    // Get minted seats for a concert
-    /**
- * Mendapatkan daftar tempat duduk yang sudah dibeli untuk sebuah konser
- * @param {string} concertId - ID konser
- * @returns {Promise<Object>} Hasil termasuk daftar tempat duduk
- */
     async getMintedSeats(concertId) {
         try {
-            console.log(`Getting minted seats for concert: ${concertId}`);
+            console.log(`🔍 Getting minted seats for concert: ${concertId}`);
 
-            // Try to get from cache first
-            const cacheKey = `minted_seats_${concertId}`;
-            let cachedSeats = null;
+            // ✅ FIX 1: Add timestamp for cache busting
+            const timestamp = Date.now();
 
-            try {
-                cachedSeats = JSON.parse(localStorage.getItem(cacheKey) || '[]');
-                console.log(`Found ${cachedSeats.length} minted seats in cache`);
-            } catch (cacheErr) {
-                console.error('Error reading cache:', cacheErr);
-            }
+            // ✅ FIX 2: Correct API endpoint with /tickets/ prefix
+            const apiUrl = `${this.baseUrl}/tickets/concerts/${concertId}/minted-seats?t=${timestamp}`;
 
-            // If already in cache and not forced to refresh, use cache
-            if (cachedSeats && cachedSeats.length > 0) {
-                return { success: true, seats: cachedSeats };
-            }
+            console.log(`📡 Fetching from: ${apiUrl}`);
 
-            // If not in cache, get from API
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 10000);
 
             try {
-                const response = await fetch(`${this.baseUrl}/concerts/${concertId}/minted-seats`, {
-                    signal: controller.signal
+                const response = await fetch(apiUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        // ✅ FIX 3: Add cache-busting headers
+                        'Cache-Control': 'no-cache, no-store, must-revalidate',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
+                    },
+                    signal: controller.signal,
+                    // ✅ FIX 4: Disable browser cache
+                    cache: 'no-cache'
                 });
 
                 clearTimeout(timeoutId);
 
                 if (!response.ok) {
-                    // If API not available, use cache data as fallback
-                    if (cachedSeats) {
-                        return { success: true, seats: cachedSeats };
-                    }
-                    throw new Error(`Failed to fetch minted seats: ${response.status}`);
+                    throw new Error(`API error: ${response.status} ${response.statusText}`);
                 }
 
                 const data = await response.json();
-                const seats = data.seats || data;
+                console.log('🎫 API Response:', data);
 
-                // Save to cache
-                localStorage.setItem(cacheKey, JSON.stringify(seats));
+                const seats = data.seats || [];
+                console.log(`✅ Found ${seats.length} minted seats: [${seats.join(', ')}]`);
 
-                return { success: true, seats };
+                // ✅ FIX 5: Update cache with fresh data (optional - you can remove caching entirely)
+                const cacheKey = `minted_seats_${concertId}`;
+                try {
+                    localStorage.setItem(cacheKey, JSON.stringify(seats));
+                    console.log(`💾 Updated cache for concert ${concertId}`);
+                } catch (cacheErr) {
+                    console.warn('Cache update failed:', cacheErr);
+                }
+
+                return {
+                    success: true,
+                    seats,
+                    timestamp: data.timestamp,
+                    source: 'api'
+                };
+
             } catch (fetchError) {
                 clearTimeout(timeoutId);
 
+                console.error('❌ API fetch failed:', fetchError);
+
+                // ✅ FIX 6: Only use cache as absolute last resort
                 if (fetchError.name === 'AbortError') {
-                    console.error('Fetch minted seats timed out');
+                    console.error('⏰ Request timed out');
                 }
 
-                // If failed to get from API, use cache as fallback
-                if (cachedSeats) {
-                    return { success: true, seats: cachedSeats };
+                // Try cache only if network completely failed
+                const cacheKey = `minted_seats_${concertId}`;
+                try {
+                    const cachedSeats = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+                    if (cachedSeats && cachedSeats.length > 0) {
+                        console.warn(`⚠️ Using cached data (${cachedSeats.length} seats) due to API failure`);
+                        return {
+                            success: true,
+                            seats: cachedSeats,
+                            source: 'cache_fallback',
+                            warning: 'Using cached data due to API failure'
+                        };
+                    }
+                } catch (cacheErr) {
+                    console.error('Cache read failed:', cacheErr);
                 }
 
-                return { success: false, seats: [], error: fetchError.message };
+                throw fetchError;
+            }
+
+        } catch (error) {
+            console.error('❌ Error getting minted seats:', error);
+            return {
+                success: false,
+                seats: [],
+                error: error.message,
+                source: 'error'
+            };
+        }
+    }
+
+    // ✅ BONUS: Add cache clearing method
+    async clearMintedSeatsCache(concertId = null) {
+        try {
+            if (concertId) {
+                // Clear specific concert cache
+                const cacheKey = `minted_seats_${concertId}`;
+                localStorage.removeItem(cacheKey);
+                console.log(`🗑️ Cleared cache for concert ${concertId}`);
+            } else {
+                // Clear all minted seats cache
+                const keys = Object.keys(localStorage);
+                keys.forEach(key => {
+                    if (key.startsWith('minted_seats_')) {
+                        localStorage.removeItem(key);
+                    }
+                });
+                console.log('🗑️ Cleared all minted seats cache');
             }
         } catch (error) {
-            console.error('Error getting minted seats:', error);
-            return { success: false, seats: [], error: error.message };
+            console.error('Error clearing cache:', error);
         }
+    }
+
+    // ✅ BONUS: Force refresh method
+    async getMintedSeatsForceRefresh(concertId) {
+        // Clear cache first, then get fresh data
+        await this.clearMintedSeatsCache(concertId);
+        return await this.getMintedSeats(concertId);
     }
 
     /**
