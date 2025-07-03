@@ -1,10 +1,10 @@
-// frontend/src/components/SeatSelector.js - COMPLETE FIXED VERSION
+// frontend/src/components/SeatSelector.js - COMPLETE VERSION dengan Theater Style Numbering
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import LoadingSpinner from './common/LoadingSpinner';
 import ApiService from '../services/ApiService';
 import blockchainService from '../services/blockchain';
-import socketService from '../services/socketService'; // Import your socketService
+import socketService from '../services/socketService';
 
 const SeatSelector = ({
     ticketType,
@@ -17,7 +17,7 @@ const SeatSelector = ({
 }) => {
     const wallet = useWallet();
 
-    // Basic state
+    // Core state
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [availableSeats, setAvailableSeats] = useState([]);
@@ -35,31 +35,30 @@ const SeatSelector = ({
     const [lastUpdate, setLastUpdate] = useState(Date.now());
     const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
 
-    // ✅ DEBUG: State untuk track minted seats
+    // Enhanced UI state
+    const [hoveredSeat, setHoveredSeat] = useState(null);
     const [debugMintedSeats, setDebugMintedSeats] = useState([]);
     const [debugInfo, setDebugInfo] = useState('');
+    const [numberingFormat, setNumberingFormat] = useState('theater'); // 'theater', 'sequential', 'column'
 
     // Refs
     const lockTimerRef = useRef(null);
     const myTicketsRef = useRef([]);
     const pollingIntervalRef = useRef(null);
 
-    // ✅ ENHANCED: Polling dengan debugging minted seats
+    // ✅ ENHANCED: Polling dengan debugging
     useEffect(() => {
         if (!autoRefreshEnabled || !concertId || !ticketType) return;
 
         const startPolling = () => {
-            // Initial fetch
             refreshSeatStatus();
-
-            // Then poll every 2 seconds
             pollingIntervalRef.current = setInterval(async () => {
                 try {
                     await refreshSeatStatus();
                 } catch (err) {
                     console.warn('Auto-refresh error:', err);
                 }
-            }, 2000);
+            }, 3000);
         };
 
         startPolling();
@@ -110,23 +109,19 @@ const SeatSelector = ({
         fetchBalance();
     }, [wallet?.publicKey]);
 
-    // ✅ ENHANCED: Setup WebSocket connection and event listeners
+    // ✅ ENHANCED: Setup WebSocket connection
     useEffect(() => {
         if (!wallet?.connected || !concertId) return;
 
         const setupSocketConnection = async () => {
             try {
-                // Connect to WebSocket
                 await socketService.connect();
-
-                // Authenticate user
                 socketService.authenticate(wallet.publicKey.toString(), concertId);
 
                 // Setup event listeners
                 const handleSeatStatusUpdate = (data) => {
                     console.log('🎫 Real-time seat update:', data);
 
-                    // Update local state based on real-time updates
                     if (data.action === 'locked') {
                         setLockedSeats(prev => {
                             const newMap = new Map(prev);
@@ -146,7 +141,6 @@ const SeatSelector = ({
                             return newMap;
                         });
                     } else if (data.action === 'minted') {
-                        // Refresh minted seats when someone completes purchase
                         setTimeout(() => {
                             refreshSeatStatus();
                         }, 1000);
@@ -177,7 +171,6 @@ const SeatSelector = ({
                     setError('Your seat selection expires in 30 seconds!');
                 };
 
-                // Register event listeners
                 socketService.on('seatStatusUpdate', handleSeatStatusUpdate);
                 socketService.on('seatLocked', handleSeatLocked);
                 socketService.on('lockExpired', handleLockExpired);
@@ -185,7 +178,6 @@ const SeatSelector = ({
 
                 console.log('✅ WebSocket connection established for concert:', concertId);
 
-                // Cleanup function
                 return () => {
                     socketService.off('seatStatusUpdate', handleSeatStatusUpdate);
                     socketService.off('seatLocked', handleSeatLocked);
@@ -211,7 +203,7 @@ const SeatSelector = ({
         };
     }, [wallet?.connected, concertId]);
 
-    // Generate seat layout
+    // ✅ FIXED: Generate seat layout dengan Theater Style numbering
     useEffect(() => {
         if (!ticketType || !selectedConcert) {
             setAvailableSeats([]);
@@ -219,16 +211,16 @@ const SeatSelector = ({
         }
 
         generateSeats();
-    }, [ticketType, selectedConcert, debugMintedSeats, refreshTrigger, lockedSeats, processingSeats, lastUpdate]);
+    }, [ticketType, selectedConcert, debugMintedSeats, refreshTrigger, numberingFormat]);
 
-    // ✅ ENHANCED: Refresh dengan debugging minted seats
+    // ✅ ENHANCED: Refresh dengan debugging
     const refreshSeatStatus = async () => {
         if (!concertId) return;
 
         try {
             setConnectionStatus('checking');
 
-            // ✅ DEBUG: Get minted seats dengan detailed logging
+            // Get minted seats
             console.log(`🔍 Fetching minted seats for concert: ${concertId}`);
 
             try {
@@ -274,7 +266,6 @@ const SeatSelector = ({
                                     timeRemaining: lock.timeRemaining
                                 });
 
-                                // If it's my lock, update reservation
                                 if (lock.userId === wallet?.publicKey?.toString()) {
                                     setMyReservation({
                                         seatKey: `${lock.concertId}-${lock.sectionName}-${lock.seatNumber}`,
@@ -319,7 +310,7 @@ const SeatSelector = ({
         }
     };
 
-    // ✅ FIXED: Generate seats dengan correct numbering logic
+    // ✅ FIXED: Generate seats dengan THEATER STYLE numbering
     const generateSeats = useCallback(() => {
         setLoading(true);
         setError('');
@@ -348,14 +339,33 @@ const SeatSelector = ({
                 for (let col = 0; col < cols; col++) {
                     const seatNumber = row * cols + col + 1;
                     if (seatNumber <= totalSeats) {
-                        // ✅ FIXED: Correct seat numbering logic to match database
+                        // ✅ THEATER STYLE: Proper seat numbering
                         const rowLabel = String.fromCharCode(65 + row); // A, B, C, D...
-                        const seatCode = `${ticketType}-${rowLabel}${col + 1}`; // VIP-A1, VIP-A2, VIP-A3...
-                        const seatNumberCode = `${rowLabel}${col + 1}`; // A1, A2, A3...
+                        const colNumber = col + 1; // 1, 2, 3, 4...
 
-                        console.log(`Generated seat: ${seatCode} (DB lookup)`);
+                        // Database format: VIP-A1, VIP-A2, VIP-B1, VIP-B2, dst
+                        const seatCode = `${ticketType}-${rowLabel}${colNumber}`;
+                        const seatNumberCode = `${rowLabel}${colNumber}`; // A1, A2, B1, B2
 
-                        // ✅ Check if minted using debugMintedSeats (from API)
+                        // ✅ DISPLAY FORMAT berdasarkan pilihan
+                        let displayNumber;
+                        switch (numberingFormat) {
+                            case 'theater':
+                                displayNumber = `${rowLabel}${colNumber}`; // A1, A2, B1, B2
+                                break;
+                            case 'sequential':
+                                displayNumber = seatNumber.toString(); // 1, 2, 3, 4, 5
+                                break;
+                            case 'column':
+                                displayNumber = colNumber.toString(); // 1, 2, 3 (restart per row)
+                                break;
+                            default:
+                                displayNumber = `${rowLabel}${colNumber}`;
+                        }
+
+                        console.log(`Generated seat: ${seatCode} (Display: ${displayNumber})`);
+
+                        // Check if minted using debugMintedSeats
                         const isMinted = debugMintedSeats.includes(seatCode);
 
                         if (isMinted) {
@@ -369,10 +379,14 @@ const SeatSelector = ({
                         );
 
                         allSeats.push({
-                            code: seatCode,
-                            seatNumberCode,
+                            code: seatCode,              // VIP-A1, VIP-A2, dst
+                            seatNumberCode,              // A1, A2, dst (for database)
+                            displayNumber,               // A1, A2 atau 1, 2 dst (for UI)
                             row,
                             col,
+                            rowLabel,                    // A, B, C, dst
+                            colNumber,                   // 1, 2, 3, dst
+                            sequentialNumber: seatNumber, // 1, 2, 3, 4, 5, dst
                             isMinted,
                             isOwned
                         });
@@ -385,9 +399,9 @@ const SeatSelector = ({
             const mintedCount = allSeats.filter(seat => seat.isMinted).length;
             console.log(`Generated ${allSeats.length} seats for ${ticketType}, ${mintedCount} are minted`);
 
-            // ✅ Debug: Log first few seat codes to verify
-            const firstFewSeats = allSeats.slice(0, 5).map(s => s.code);
-            console.log(`First 5 seat codes: [${firstFewSeats.join(', ')}]`);
+            // Debug: Log first few seat codes
+            const firstFewSeats = allSeats.slice(0, 5).map(s => `${s.displayNumber}(${s.code})`);
+            console.log(`First 5 seats: [${firstFewSeats.join(', ')}]`);
             console.log(`API minted seats: [${debugMintedSeats.join(', ')}]`);
 
         } catch (err) {
@@ -396,7 +410,7 @@ const SeatSelector = ({
         } finally {
             setLoading(false);
         }
-    }, [ticketType, selectedConcert, debugMintedSeats, myTicketsRef, lockedSeats, processingSeats]);
+    }, [ticketType, selectedConcert, debugMintedSeats, numberingFormat, myTicketsRef]);
 
     // Reserve seat via API
     const reserveSeat = async (seat) => {
@@ -438,7 +452,6 @@ const SeatSelector = ({
                 startLockTimer(result.expiresAt);
                 setConnectionStatus('reserved');
 
-                // Immediate refresh
                 setTimeout(() => {
                     refreshSeatStatus();
                 }, 500);
@@ -490,7 +503,6 @@ const SeatSelector = ({
                 clearReservation();
                 setConnectionStatus('connected');
 
-                // Immediate refresh
                 setTimeout(() => {
                     refreshSeatStatus();
                 }, 500);
@@ -507,9 +519,9 @@ const SeatSelector = ({
     const handleSeatClick = async (seat) => {
         if (seat.isMinted) {
             if (seat.isOwned) {
-                setError(`You already own seat ${seat.seatNumberCode}`);
+                setError(`You already own seat ${seat.displayNumber}`);
             } else {
-                setError(`Seat ${seat.seatNumberCode} is already sold`);
+                setError(`Seat ${seat.displayNumber} is already sold`);
             }
             return;
         }
@@ -517,7 +529,7 @@ const SeatSelector = ({
         // Check if seat is locked by someone else
         const seatLock = lockedSeats.get(seat.code);
         if (seatLock && seatLock.lockedBy === 'other') {
-            setError(`Seat ${seat.seatNumberCode} is currently selected by another user`);
+            setError(`Seat ${seat.displayNumber} is currently selected by another user`);
             return;
         }
 
@@ -605,41 +617,41 @@ const SeatSelector = ({
         return 'available';
     };
 
-    // Get seat CSS classes
+    // ✅ ENHANCED: Get seat CSS classes dengan hover effects
     const getSeatClasses = (seat) => {
         const status = getSeatStatus(seat);
-        const baseClasses = 'w-6 h-6 flex items-center justify-center rounded-sm text-xs transition-all duration-200 cursor-pointer relative';
+        const isHovered = hoveredSeat === seat.code;
+        const baseClasses = `
+            relative w-10 h-10 flex items-center justify-center rounded-lg text-xs font-medium
+            transition-all duration-200 cursor-pointer transform
+            ${isHovered && status === 'available' ? 'scale-105 shadow-lg z-10' : ''}
+        `;
 
-        switch (status) {
-            case 'owned':
-                return `${baseClasses} bg-green-500/80 text-white border border-green-300 cursor-not-allowed`;
-            case 'minted':
-                return `${baseClasses} bg-red-500/60 text-gray-200 cursor-not-allowed`;
-            case 'processing':
-                return `${baseClasses} bg-yellow-500/80 text-white animate-pulse cursor-not-allowed`;
-            case 'selected':
-                return `${baseClasses} bg-purple-600 text-white border-2 border-purple-400 shadow-lg scale-110`;
-            case 'locked':
-                return `${baseClasses} bg-orange-500/60 text-gray-200 cursor-not-allowed`;
-            case 'available':
-            default:
-                return `${baseClasses} bg-gray-700 text-gray-300 hover:bg-gray-600 hover:scale-105 hover:shadow-md`;
-        }
+        const statusStyles = {
+            owned: 'bg-green-500 text-white border-2 border-green-300 shadow-green-500/30',
+            minted: 'bg-red-500 text-white opacity-75 cursor-not-allowed',
+            processing: 'bg-yellow-500 text-white animate-pulse cursor-wait',
+            selected: 'bg-purple-600 text-white border-2 border-purple-400 shadow-lg scale-105',
+            locked: 'bg-orange-500 text-white opacity-80 cursor-not-allowed',
+            available: `bg-gray-700 text-gray-300 hover:bg-gray-600 hover:scale-105 border border-gray-600
+                        ${isHovered ? 'border-blue-400 bg-gray-600 shadow-md' : ''}`
+        };
+
+        return `${baseClasses} ${statusStyles[status]}`;
     };
 
     // Get seat tooltip
     const getSeatTooltip = (seat) => {
         const status = getSeatStatus(seat);
-
-        switch (status) {
-            case 'owned': return `${seat.code} (Your Seat)`;
-            case 'minted': return `${seat.code} (Already Sold)`;
-            case 'processing': return `${seat.code} (Being Processed)`;
-            case 'selected': return `${seat.code} (Selected by You)`;
-            case 'locked': return `${seat.code} (Selected by Another User)`;
-            case 'available': return `${seat.code} (Available - Click to select)`;
-            default: return seat.code;
-        }
+        const tooltips = {
+            owned: `${seat.displayNumber} (Your Seat)`,
+            minted: `${seat.displayNumber} (Already Sold)`,
+            processing: `${seat.displayNumber} (Being Processed)`,
+            selected: `${seat.displayNumber} (Selected by You)`,
+            locked: `${seat.displayNumber} (Selected by Another User)`,
+            available: `${seat.displayNumber} (Available - Click to select)`
+        };
+        return tooltips[status] || seat.displayNumber;
     };
 
     // Manual refresh
@@ -659,6 +671,21 @@ const SeatSelector = ({
         }
     };
 
+    // Get seat statistics
+    const seatStats = {
+        total: availableSeats.length,
+        available: availableSeats.filter(s => getSeatStatus(s) === 'available').length,
+        taken: availableSeats.filter(s => ['minted', 'owned'].includes(getSeatStatus(s))).length,
+        locked: Array.from(lockedSeats.values()).length,
+        processing: processingSeats.size
+    };
+
+    // Group seats by row for display
+    const seatsByRow = [];
+    for (let r = 0; r < rows; r++) {
+        seatsByRow.push(availableSeats.filter(seat => seat.row === r));
+    }
+
     // Component cleanup
     useEffect(() => {
         return () => {
@@ -669,16 +696,15 @@ const SeatSelector = ({
             if (myReservation) {
                 releaseSeatReservation();
             }
-            // Don't disconnect socket here as it might be used by other components
         };
     }, []);
 
     // Render loading state
     if (loading) {
         return (
-            <div className="flex justify-center items-center py-8">
+            <div className="flex justify-center items-center py-12">
                 <LoadingSpinner />
-                <span className="ml-2 text-gray-300">Loading seat layout...</span>
+                <span className="ml-3 text-gray-300">Loading seat layout...</span>
             </div>
         );
     }
@@ -686,7 +712,7 @@ const SeatSelector = ({
     // Render if no concert or ticket type selected
     if (!ticketType || !selectedConcert) {
         return (
-            <div className="text-center py-4">
+            <div className="text-center py-8">
                 <p className="text-gray-400">Please select a concert and ticket type first</p>
             </div>
         );
@@ -695,11 +721,11 @@ const SeatSelector = ({
     // No seats available
     if (availableSeats.length === 0) {
         return (
-            <div className="text-center py-4">
-                <p className="text-gray-400">No seats available for this category</p>
+            <div className="text-center py-8">
+                <p className="text-gray-400 mb-4">No seats available for this category</p>
                 <button
                     onClick={handleRefresh}
-                    className="mt-2 text-sm text-blue-400 hover:text-blue-300"
+                    className="text-blue-400 hover:text-blue-300 text-sm"
                 >
                     Try refreshing
                 </button>
@@ -711,70 +737,132 @@ const SeatSelector = ({
     const section = selectedConcert.sections.find(s => s.name === ticketType);
     const price = section ? section.price : 0;
 
-    // Group seats by row
-    const seatsByRow = [];
-    for (let r = 0; r < rows; r++) {
-        seatsByRow.push(availableSeats.filter(seat => seat.row === r));
-    }
-
     return (
         <div className="seat-selector">
-            {/* ✅ DEBUG INFO SECTION */}
-            {debugInfo && (
+            {/* ✅ DEBUG INFO SECTION (dapat dihapus di production) */}
+            {process.env.NODE_ENV === 'development' && debugInfo && (
                 <div className="bg-blue-500/10 border border-blue-500 rounded-lg p-3 mb-4">
                     <p className="text-blue-400 text-sm font-bold">🔍 DEBUG INFO:</p>
                     <p className="text-blue-300 text-xs">{debugInfo}</p>
                     <p className="text-blue-300 text-xs">Concert ID: {concertId}</p>
-                    <p className="text-blue-300 text-xs">Debug Minted Seats: [{debugMintedSeats.join(', ')}]</p>
-                    <p className="text-blue-300 text-xs">Original Minted Seats: [{mintedSeats.join(', ')}]</p>
+                    <p className="text-blue-300 text-xs">Numbering: {numberingFormat}</p>
+                    <p className="text-blue-300 text-xs">Minted Seats: [{debugMintedSeats.join(', ')}]</p>
                 </div>
             )}
 
-            {/* Connection Status */}
-            <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center space-x-2">
-                    <div className={`w-2 h-2 rounded-full ${connectionStatus === 'connected' ? 'bg-green-400' :
-                        connectionStatus === 'reserved' ? 'bg-blue-400' :
-                            connectionStatus === 'error' ? 'bg-red-400' :
-                                'bg-yellow-400'
-                        }`}></div>
-                    <span className="text-xs text-gray-400">
-                        {connectionStatus === 'connected' && 'Real-time updates active (WebSocket + API polling)'}
-                        {connectionStatus === 'reserved' && 'Seat reserved'}
-                        {connectionStatus === 'reserving' && 'Reserving seat...'}
-                        {connectionStatus === 'releasing' && 'Releasing seat...'}
-                        {connectionStatus === 'checking' && 'Checking status...'}
-                        {connectionStatus === 'error' && 'Connection error'}
-                    </span>
+            {/* Header with Controls */}
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between mb-6 space-y-4 lg:space-y-0">
+                <div>
+                    <h3 className="text-xl font-semibold text-white mb-1">Select Your Seat</h3>
+                    <p className="text-gray-400 text-sm">
+                        {selectedConcert.name} • {ticketType} Section • {price} SOL
+                    </p>
                 </div>
 
-                <div className="flex items-center space-x-2">
+                {/* Controls */}
+                <div className="flex items-center space-x-4">
+                    {/* Numbering Format Toggle */}
+                    <div className="flex items-center bg-gray-800 rounded-lg p-1">
+                        <button
+                            onClick={() => setNumberingFormat('theater')}
+                            className={`px-2 py-1 text-xs rounded transition-colors ${numberingFormat === 'theater'
+                                    ? 'bg-purple-600 text-white'
+                                    : 'text-gray-400 hover:text-white'
+                                }`}
+                            title="Theater style: A1, A2, B1, B2"
+                        >
+                            A1
+                        </button>
+                        <button
+                            onClick={() => setNumberingFormat('sequential')}
+                            className={`px-2 py-1 text-xs rounded transition-colors ${numberingFormat === 'sequential'
+                                    ? 'bg-purple-600 text-white'
+                                    : 'text-gray-400 hover:text-white'
+                                }`}
+                            title="Sequential: 1, 2, 3, 4, 5"
+                        >
+                            123
+                        </button>
+                        <button
+                            onClick={() => setNumberingFormat('column')}
+                            className={`px-2 py-1 text-xs rounded transition-colors ${numberingFormat === 'column'
+                                    ? 'bg-purple-600 text-white'
+                                    : 'text-gray-400 hover:text-white'
+                                }`}
+                            title="Column per row: 1-9, 1-9, 1-9"
+                        >
+                            1-9
+                        </button>
+                    </div>
+
+                    {/* Connection Status */}
+                    <div className="flex items-center space-x-2">
+                        <div className={`w-2 h-2 rounded-full ${connectionStatus === 'connected' ? 'bg-green-400' :
+                                connectionStatus === 'reserved' ? 'bg-blue-400' :
+                                    connectionStatus === 'error' ? 'bg-red-400' : 'bg-yellow-400'
+                            }`}></div>
+                        <span className="text-xs text-gray-400">
+                            {connectionStatus === 'connected' && 'Real-time'}
+                            {connectionStatus === 'reserved' && 'Seat reserved'}
+                            {connectionStatus === 'error' && 'Connection error'}
+                            {connectionStatus === 'checking' && 'Updating...'}
+                            {connectionStatus === 'reserving' && 'Reserving...'}
+                            {connectionStatus === 'releasing' && 'Releasing...'}
+                        </span>
+                    </div>
+
+                    {/* Auto-refresh Toggle */}
                     <button
                         onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
-                        className={`text-xs px-2 py-1 rounded ${autoRefreshEnabled
-                            ? 'bg-green-600 text-white'
-                            : 'bg-gray-600 text-gray-300'
+                        className={`text-xs px-2 py-1 rounded transition-colors ${autoRefreshEnabled
+                                ? 'bg-green-600 text-white'
+                                : 'bg-gray-600 text-gray-300'
                             }`}
                         title={autoRefreshEnabled ? 'Disable auto-refresh' : 'Enable auto-refresh'}
                     >
                         Auto: {autoRefreshEnabled ? 'ON' : 'OFF'}
                     </button>
 
+                    {/* Manual Refresh */}
                     <button
                         onClick={handleRefresh}
                         disabled={loading}
-                        className="text-xs bg-gray-700 hover:bg-gray-600 p-1 rounded disabled:opacity-50"
+                        className="text-xs bg-gray-700 hover:bg-gray-600 p-2 rounded disabled:opacity-50 transition-colors"
                         title="Manual refresh"
                     >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="w-3 h-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                         </svg>
                     </button>
                 </div>
             </div>
 
+            {/* Enhanced Statistics Bar */}
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
+                <div className="bg-gray-800 rounded-lg p-3 text-center">
+                    <div className="text-lg font-bold text-white">{seatStats.total}</div>
+                    <div className="text-xs text-gray-400">Total Seats</div>
+                </div>
+                <div className="bg-green-900/30 border border-green-700 rounded-lg p-3 text-center">
+                    <div className="text-lg font-bold text-green-400">{seatStats.available}</div>
+                    <div className="text-xs text-gray-400">Available</div>
+                </div>
+                <div className="bg-red-900/30 border border-red-700 rounded-lg p-3 text-center">
+                    <div className="text-lg font-bold text-red-400">{seatStats.taken}</div>
+                    <div className="text-xs text-gray-400">Taken</div>
+                </div>
+                <div className="bg-orange-900/30 border border-orange-700 rounded-lg p-3 text-center">
+                    <div className="text-lg font-bold text-orange-400">{seatStats.locked}</div>
+                    <div className="text-xs text-gray-400">Locked</div>
+                </div>
+                <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg p-3 text-center">
+                    <div className="text-lg font-bold text-yellow-400">{seatStats.processing}</div>
+                    <div className="text-xs text-gray-400">Processing</div>
+                </div>
+            </div>
+
             {/* Price and Balance Info */}
-            <div className="bg-gray-800/50 p-3 rounded-lg mb-4 border border-purple-900/30">
+            <div className="bg-gray-800/50 p-4 rounded-lg mb-6 border border-purple-900/30">
                 <div className="flex justify-between items-center mb-2">
                     <span className="text-gray-300 text-sm">Ticket Price:</span>
                     <span className="text-purple-400 font-medium">{price} SOL</span>
@@ -803,107 +891,131 @@ const SeatSelector = ({
 
             {/* Error Display */}
             {error && (
-                <div className="bg-red-500/10 border border-red-500 rounded-lg p-3 mb-4">
-                    <p className="text-red-500 text-sm">{error}</p>
+                <div className="bg-red-500/10 border border-red-500 rounded-lg p-4 mb-6 flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                        <svg className="w-5 h-5 text-red-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <div>
+                            <p className="text-red-400 text-sm font-medium">{error}</p>
+                            <p className="text-red-300 text-xs mt-1">Please try selecting a different seat</p>
+                        </div>
+                    </div>
                     <button
                         onClick={() => setError('')}
-                        className="mt-2 text-xs text-gray-300 hover:text-white"
+                        className="text-red-400 hover:text-red-300 transition-colors"
                     >
-                        Dismiss
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
                     </button>
                 </div>
             )}
 
-            {/* Stage */}
-            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-center py-2 mb-4 rounded-lg shadow-lg">
-                <span className="text-sm font-medium">🎭 STAGE</span>
-            </div>
-
-            {/* Seat Legend */}
-            <div className="flex flex-wrap justify-center mb-4 gap-3">
-                <div className="flex items-center">
-                    <div className="w-4 h-4 bg-gray-700 rounded-sm mr-2"></div>
-                    <span className="text-gray-400 text-xs">Available</span>
-                </div>
-                <div className="flex items-center">
-                    <div className="w-4 h-4 bg-purple-600 rounded-sm mr-2"></div>
-                    <span className="text-gray-400 text-xs">Selected</span>
-                </div>
-                <div className="flex items-center">
-                    <div className="w-4 h-4 bg-orange-500/60 rounded-sm mr-2"></div>
-                    <span className="text-gray-400 text-xs">
-                        Locked ({lockedSeats.size})
-                    </span>
-                </div>
-                <div className="flex items-center">
-                    <div className="w-4 h-4 bg-yellow-500/80 rounded-sm mr-2"></div>
-                    <span className="text-gray-400 text-xs">
-                        Processing ({processingSeats.size})
-                    </span>
-                </div>
-                <div className="flex items-center">
-                    <div className="w-4 h-4 bg-red-500/60 rounded-sm mr-2"></div>
-                    <span className="text-gray-400 text-xs">
-                        Sold ({debugMintedSeats.length})
-                    </span>
-                </div>
-                <div className="flex items-center">
-                    <div className="w-4 h-4 bg-green-500/80 rounded-sm mr-2"></div>
-                    <span className="text-gray-400 text-xs">Your Seats</span>
+            {/* Stage Indicator */}
+            <div className="bg-gradient-to-r from-purple-600 via-blue-600 to-indigo-600 text-white text-center py-3 mb-6 rounded-lg shadow-lg">
+                <div className="flex items-center justify-center space-x-2">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12 6-12 7z" />
+                    </svg>
+                    <span className="text-sm font-medium">STAGE</span>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
                 </div>
             </div>
 
-            {/* Seats Grid */}
-            <div className="overflow-auto max-h-64 my-2 pb-2 px-1 border border-gray-700 rounded">
-                {seatsByRow.map((rowSeats, rowIndex) => (
-                    <div
-                        key={`row-${rowIndex}`}
-                        className="grid gap-1 mx-auto mb-1"
-                        style={{
-                            gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-                            maxWidth: `${columns * 28}px`
-                        }}
-                    >
-                        {rowSeats.map(seat => (
-                            <div
-                                key={seat.code}
-                                onClick={() => handleSeatClick(seat)}
-                                className={getSeatClasses(seat)}
-                                title={getSeatTooltip(seat)}
-                            >
-                                {seat.col + 1}
-                                {/* Status indicators */}
-                                {getSeatStatus(seat) === 'selected' && (
-                                    <div className="absolute -top-1 -right-1 w-2 h-2 bg-blue-400 rounded-full"></div>
-                                )}
-                                {getSeatStatus(seat) === 'processing' && (
-                                    <div className="absolute -top-1 -right-1 w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
-                                )}
-                                {getSeatStatus(seat) === 'locked' && (
-                                    <div className="absolute -top-1 -right-1 w-2 h-2 bg-orange-400 rounded-full"></div>
-                                )}
-                                {getSeatStatus(seat) === 'minted' && (
-                                    <div className="absolute -top-1 -right-1 w-2 h-2 bg-red-400 rounded-full"></div>
-                                )}
-                            </div>
-                        ))}
+            {/* Enhanced Seat Legend */}
+            <div className="grid grid-cols-3 lg:grid-cols-5 gap-2 mb-6 text-xs">
+                {[
+                    { status: 'available', color: 'bg-gray-700', label: 'Available', count: seatStats.available },
+                    { status: 'selected', color: 'bg-purple-600', label: 'Selected', count: myReservation ? 1 : 0 },
+                    { status: 'locked', color: 'bg-orange-500', label: 'Locked', count: seatStats.locked },
+                    { status: 'processing', color: 'bg-yellow-500', label: 'Processing', count: seatStats.processing },
+                    { status: 'taken', color: 'bg-red-500', label: 'Sold', count: seatStats.taken }
+                ].map(({ status, color, label, count }) => (
+                    <div key={status} className="flex items-center space-x-2">
+                        <div className={`w-3 h-3 ${color} rounded-sm`}></div>
+                        <span className="text-gray-400">{label}</span>
+                        {count > 0 && (
+                            <span className="text-gray-500">({count})</span>
+                        )}
                     </div>
                 ))}
             </div>
 
+            {/* ✅ ENHANCED: Seats Display dengan Theater Layout */}
+            <div className="overflow-auto max-h-96 border border-gray-700 rounded-lg p-4 bg-gray-950">
+                <div className="space-y-4">
+                    {seatsByRow.map((rowSeats, rowIndex) => (
+                        <div key={`row-${rowIndex}`} className="flex items-center">
+                            {/* Row Label - hanya tampil jika bukan sequential numbering */}
+                            {numberingFormat !== 'sequential' && (
+                                <div className="w-10 h-10 bg-gray-600 rounded-lg flex items-center justify-center text-white font-bold text-sm mr-4 flex-shrink-0">
+                                    {String.fromCharCode(65 + rowIndex)} {/* A, B, C, dst */}
+                                </div>
+                            )}
+
+                            {/* Seats dalam row ini */}
+                            <div className="flex gap-2 flex-wrap">
+                                {rowSeats.map(seat => (
+                                    <div
+                                        key={seat.code}
+                                        onClick={() => handleSeatClick(seat)}
+                                        onMouseEnter={() => setHoveredSeat(seat.code)}
+                                        onMouseLeave={() => setHoveredSeat(null)}
+                                        className={getSeatClasses(seat)}
+                                        title={getSeatTooltip(seat)}
+                                    >
+                                        {seat.displayNumber}
+
+                                        {/* Status Indicators */}
+                                        {getSeatStatus(seat) === 'selected' && (
+                                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-400 rounded-full border border-white"></div>
+                                        )}
+                                        {getSeatStatus(seat) === 'processing' && (
+                                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-yellow-400 rounded-full animate-ping"></div>
+                                        )}
+                                        {getSeatStatus(seat) === 'locked' && (
+                                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-orange-400 rounded-full"></div>
+                                        )}
+                                        {getSeatStatus(seat) === 'minted' && (
+                                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-400 rounded-full"></div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Row info */}
+                            <div className="ml-4 text-gray-400 text-xs">
+                                {rowSeats.filter(s => getSeatStatus(s) === 'available').length} available
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
             {/* Current Selection Display */}
             {myReservation && (
-                <div className="mt-4 p-3 bg-purple-900/30 border border-purple-700 rounded-lg">
-                    <div className="flex justify-between items-center">
-                        <div>
-                            <p className="text-purple-300 text-sm font-medium">
-                                🎫 Selected: Seat {myReservation.seatKey.split('-').pop()}
-                            </p>
-                            {lockTimer && (
-                                <p className="text-orange-400 text-xs font-mono">
-                                    ⏰ Expires in: {lockTimer}
+                <div className="mt-6 bg-gradient-to-r from-purple-900/30 to-blue-900/30 border border-purple-700 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                            <div className="w-10 h-10 bg-purple-600 rounded-lg flex items-center justify-center">
+                                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                            </div>
+                            <div>
+                                <p className="text-purple-300 text-sm font-medium">
+                                    🎫 Selected: Seat {myReservation.seatKey.split('-').pop()}
                                 </p>
-                            )}
+                                <p className="text-gray-400 text-xs">{ticketType} Section • {price} SOL</p>
+                                {lockTimer && (
+                                    <p className="text-orange-400 text-xs font-mono">
+                                        ⏰ Expires in: {lockTimer}
+                                    </p>
+                                )}
+                            </div>
                         </div>
                         <button
                             onClick={releaseSeatReservation}
@@ -917,41 +1029,36 @@ const SeatSelector = ({
             )}
 
             {/* System Status Footer */}
-            <div className="mt-4 text-center border-t border-gray-700 pt-3">
-                <p className="text-xs text-gray-500">
-                    🔄 Last updated: {new Date(lastUpdate).toLocaleTimeString()} •
-                    {autoRefreshEnabled ? ' Auto-refresh ON (2s)' : ' Auto-refresh OFF'} •
-                    WebSocket + API Polling Mode
-                </p>
+            <div className="mt-6 text-center border-t border-gray-700 pt-4">
+                <div className="flex items-center justify-center space-x-4 text-xs text-gray-500 mb-2">
+                    <span>🔄 Last updated: {new Date(lastUpdate).toLocaleTimeString()}</span>
+                    <div className="flex items-center space-x-1">
+                        <div className={`w-2 h-2 rounded-full ${socketService.getStatus().connected ? 'bg-green-400' : 'bg-red-400'
+                            }`}></div>
+                        <span>WebSocket: {socketService.getStatus().connected ? 'Connected' : 'Disconnected'}</span>
+                    </div>
+                </div>
 
                 {/* Real-time activity indicators */}
-                <div className="flex justify-center space-x-4 mt-2 text-xs">
-                    {lockedSeats.size > 0 && (
+                <div className="flex justify-center space-x-4 text-xs">
+                    {seatStats.locked > 0 && (
                         <span className="text-orange-400">
-                            🔒 {lockedSeats.size} seat(s) locked
+                            🔒 {seatStats.locked} seat(s) locked
                         </span>
                     )}
-                    {processingSeats.size > 0 && (
+                    {seatStats.processing > 0 && (
                         <span className="text-yellow-400">
-                            ⚙️ {processingSeats.size} seat(s) processing
+                            ⚙️ {seatStats.processing} seat(s) processing
                         </span>
                     )}
-                    {debugMintedSeats.length > 0 && (
+                    {seatStats.taken > 0 && (
                         <span className="text-red-400">
-                            🎫 {debugMintedSeats.length} seat(s) sold
+                            🎫 {seatStats.taken} seat(s) sold
                         </span>
                     )}
                 </div>
 
-                {/* WebSocket connection status */}
-                <div className="flex justify-center mt-2">
-                    <span className={`text-xs ${socketService.getStatus().connected ? 'text-green-400' : 'text-red-400'}`}>
-                        WebSocket: {socketService.getStatus().connected ? 'Connected' : 'Disconnected'}
-                        {socketService.getStatus().socketId && ` (ID: ${socketService.getStatus().socketId.substring(0, 8)}...)`}
-                    </span>
-                </div>
-
-                {/* Manual refresh button */}
+                {/* Connection error recovery */}
                 {connectionStatus === 'error' && (
                     <div className="mt-2">
                         <button

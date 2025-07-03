@@ -1,4 +1,4 @@
-// src/components/MintTicket.js (Versi dengan Performance Timing)
+// src/components/MintTicket.js - Simplified Clean Version
 import React, { useState, useEffect } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
@@ -45,6 +45,10 @@ const MintTicket = () => {
     const [performanceMetrics, setPerformanceMetrics] = useState(null);
     const [showPerformanceDetails, setShowPerformanceDetails] = useState(false);
 
+    // Step tracking
+    const [currentStep, setCurrentStep] = useState(1);
+    const totalSteps = 4;
+
     // Load selected concert
     useEffect(() => {
         const loadConcertData = async () => {
@@ -52,20 +56,16 @@ const MintTicket = () => {
                 setConcert(concertId);
                 console.log("Loading concert with ID:", concertId);
 
-                // Check if concert exists in approvedConcerts
                 const selected = approvedConcerts.find(c => c.id === concertId);
                 if (selected) {
                     setSelectedConcert(selected);
                 } else {
-                    // Fetch from API if not in context
                     await fetchConcertDetail(concertId);
                 }
             }
         };
 
         loadConcertData();
-
-        // Check authentication
         const isAuth = AuthService.isAuthenticated();
         setIsAuthenticated(isAuth);
     }, [concertId, approvedConcerts]);
@@ -102,6 +102,19 @@ const MintTicket = () => {
         authenticate();
     }, [wallet.connected, wallet.publicKey]);
 
+    // Auto-advance steps based on completed data
+    useEffect(() => {
+        if (concert && selectedConcert) {
+            setCurrentStep(2);
+            if (ticketType) {
+                setCurrentStep(3);
+                if (seatNumber) {
+                    setCurrentStep(4);
+                }
+            }
+        }
+    }, [concert, selectedConcert, ticketType, seatNumber]);
+
     // Fetch concert detail from API
     const fetchConcertDetail = async (id) => {
         try {
@@ -116,7 +129,7 @@ const MintTicket = () => {
                     date: concertData.date,
                     sections: concertData.sections || [],
                     posterUrl: concertData.posterUrl,
-                    creator: concertData.creator // Make sure we get the creator address
+                    creator: concertData.creator
                 };
 
                 setSelectedConcert(formattedConcert);
@@ -135,8 +148,7 @@ const MintTicket = () => {
             if (!concert) return;
 
             try {
-                // Use API service
-                const result = await ApiService.getMintedSeats(concert);
+                const result = await ApiService.getMintedSeats(concert, true);
                 const seats = result?.seats || [];
                 setMintedSeats(seats);
             } catch (err) {
@@ -153,14 +165,78 @@ const MintTicket = () => {
         setSeatNumber(seat);
     };
 
-    // Performance metrics component
+    // Step indicator component
+    const StepIndicator = () => (
+        <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+                {[1, 2, 3, 4].map((step) => (
+                    <div key={step} className="flex items-center">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all duration-300 ${step < currentStep ? 'bg-green-500 text-white' :
+                                step === currentStep ? 'bg-blue-500 text-white animate-pulse' :
+                                    'bg-gray-600 text-gray-400'
+                            }`}>
+                            {step < currentStep ? '✓' : step}
+                        </div>
+                        {step < 4 && (
+                            <div className={`flex-1 h-1 mx-2 transition-all duration-300 ${step < currentStep ? 'bg-green-500' :
+                                    step === currentStep ? 'bg-blue-500' :
+                                        'bg-gray-600'
+                                }`} />
+                        )}
+                    </div>
+                ))}
+            </div>
+            <div className="text-center">
+                <p className="text-gray-300 text-sm">
+                    Step {currentStep} of {totalSteps}: {
+                        currentStep === 1 ? 'Select Concert' :
+                            currentStep === 2 ? 'Choose Ticket Type' :
+                                currentStep === 3 ? 'Pick Your Seat' :
+                                    'Complete Purchase'
+                    }
+                </p>
+            </div>
+        </div>
+    );
+
+    // Transaction overlay
+    const TransactionOverlay = () => (
+        <div className="fixed inset-0 bg-black/80 flex flex-col items-center justify-center z-50">
+            <div className="bg-gray-800 rounded-lg p-8 max-w-md w-full border border-gray-700">
+                <div className="flex flex-col items-center">
+                    <div className="relative mb-6">
+                        <LoadingSpinner size={12} />
+                        <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="text-blue-400 font-bold text-sm">{txProgress}%</span>
+                        </div>
+                    </div>
+
+                    <h3 className="text-xl font-bold text-white mb-2">Processing Transaction</h3>
+                    <p className="text-gray-300 text-center mb-4">{txMessage}</p>
+
+                    <div className="w-full bg-gray-700 rounded-full h-3 mb-4">
+                        <div
+                            className="bg-blue-600 h-3 rounded-full transition-all duration-500"
+                            style={{ width: `${txProgress}%` }}
+                        />
+                    </div>
+
+                    <p className="text-xs text-gray-500 text-center">
+                        Please wait while we process your transaction safely...
+                    </p>
+                </div>
+            </div>
+        </div>
+    );
+
+    // Performance metrics card
     const PerformanceMetricsCard = ({ metrics, onClose }) => {
         if (!metrics) return null;
 
         return (
-            <div className="bg-gray-800 border border-green-500 rounded-lg p-4 mt-6 mb-6">
-                <div className="flex justify-between items-center mb-3">
-                    <h3 className="text-lg font-semibold text-green-400">Performance Metrics</h3>
+            <div className="bg-gray-800 border border-green-500 rounded-lg p-6 mt-6 mb-6">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-semibold text-green-400">Transaction Complete</h3>
                     <button
                         onClick={onClose}
                         className="text-gray-400 hover:text-gray-200"
@@ -169,66 +245,55 @@ const MintTicket = () => {
                     </button>
                 </div>
 
-                <div className="flex justify-between mb-2">
-                    <span className="text-gray-300">Total Minting Time:</span>
-                    <span className="text-white font-medium">{metrics.totalTime.toFixed(2)} seconds</span>
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="bg-gray-700 rounded-lg p-3">
+                        <p className="text-gray-400 text-sm">Total Time</p>
+                        <p className="text-white font-bold text-xl">{metrics.totalTime.toFixed(2)}s</p>
+                    </div>
+                    <div className="bg-gray-700 rounded-lg p-3">
+                        <p className="text-gray-400 text-sm">Steps</p>
+                        <p className="text-white font-bold text-xl">{metrics.steps.length}</p>
+                    </div>
                 </div>
 
                 {showPerformanceDetails && (
-                    <div className="mt-4 space-y-3 border-t border-gray-700 pt-3">
-                        <h4 className="text-sm font-medium text-gray-300 mb-2">Detailed Timing:</h4>
-
+                    <div className="mt-4 space-y-2 border-t border-gray-700 pt-4">
                         {metrics.steps.map((step, index) => (
-                            <div key={index} className="grid grid-cols-12 gap-2">
-                                <div className="col-span-7 text-gray-400 text-sm">{step.name}:</div>
-                                <div className="col-span-3 text-right text-gray-400 text-sm">{step.time.toFixed(2)}s</div>
-                                <div className="col-span-2 text-right text-gray-500 text-xs">({step.percentage.toFixed(1)}%)</div>
+                            <div key={index} className="flex justify-between items-center">
+                                <span className="text-gray-400 text-sm">{step.name}</span>
+                                <span className="text-gray-300 text-sm">{step.time.toFixed(2)}s</span>
                             </div>
                         ))}
                     </div>
                 )}
 
-                <button
-                    onClick={() => setShowPerformanceDetails(!showPerformanceDetails)}
-                    className="mt-3 text-sm text-indigo-400 hover:text-indigo-300"
-                >
-                    {showPerformanceDetails ? 'Hide Details' : 'Show Details'}
-                </button>
-
-                {/* "Download as CSV" button for research purposes */}
-                <button
-                    onClick={() => downloadPerformanceData(metrics)}
-                    className="mt-2 w-full bg-gray-700 hover:bg-gray-600 text-sm text-white py-1 px-2 rounded"
-                >
-                    Download Data (CSV)
-                </button>
+                <div className="flex gap-3 mt-4">
+                    <button
+                        onClick={() => setShowPerformanceDetails(!showPerformanceDetails)}
+                        className="flex-1 text-sm bg-gray-700 hover:bg-gray-600 text-white py-2 px-3 rounded"
+                    >
+                        {showPerformanceDetails ? 'Hide Details' : 'Show Details'}
+                    </button>
+                    <button
+                        onClick={() => downloadPerformanceData(metrics)}
+                        className="flex-1 text-sm bg-blue-600 hover:bg-blue-700 text-white py-2 px-3 rounded"
+                    >
+                        Download
+                    </button>
+                </div>
             </div>
         );
     };
 
-    // Function to download performance data as CSV
+    // Download performance data
     const downloadPerformanceData = (metrics) => {
         try {
-            // Create CSV content
             let csvContent = "Step,Time (seconds),Percentage\n";
-
-            // Add each step
             metrics.steps.forEach(step => {
                 csvContent += `"${step.name}",${step.time.toFixed(3)},${step.percentage.toFixed(2)}\n`;
             });
-
-            // Add total
             csvContent += `"TOTAL",${metrics.totalTime.toFixed(3)},100\n`;
 
-            // Add system info
-            csvContent += "\nSystem Information\n";
-            csvContent += `Date,"${new Date().toISOString()}"\n`;
-            csvContent += `User Agent,"${navigator.userAgent}"\n`;
-            csvContent += `Network Info,"${navigator.connection ?
-                `${navigator.connection.effectiveType}, Round-trip: ${navigator.connection.rtt}ms` :
-                'Not Available'}"\n`;
-
-            // Create a blob and download
             const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
@@ -242,211 +307,91 @@ const MintTicket = () => {
         }
     };
 
-    // Transaction overlay component with performance metrics
-    const TransactionOverlay = () => (
-        <div className="fixed inset-0 bg-black/70 flex flex-col items-center justify-center z-50">
-            <div className="bg-gray-800 rounded-lg p-8 max-w-md w-full">
-                <div className="flex flex-col items-center">
-                    <LoadingSpinner size={8} />
-                    <p className="mt-4 text-white text-lg font-medium">{txMessage}</p>
-                    {txProgress > 0 && (
-                        <div className="w-full mt-4 bg-gray-700 rounded-full h-2.5 overflow-hidden">
-                            <div
-                                className="bg-blue-600 h-2.5"
-                                style={{ width: `${txProgress}%` }}
-                            ></div>
-                            <p className="text-right text-gray-400 text-sm mt-1">{txProgress}%</p>
-                        </div>
-                    )}
-                </div>
-            </div>
-        </div>
-    );
-
-    // Fungsi untuk memastikan data tiket diperbarui setelah minting
-    const refreshTicketData = async () => {
-        try {
-            console.log("Memperbarui data tiket...");
-
-            // Hapus cache tiket di localStorage untuk memastikan data segar
-            localStorage.removeItem('myTickets');
-            localStorage.removeItem(`my_tickets_false`);
-            localStorage.removeItem(`my_tickets_true`);
-            localStorage.removeItem('my_tickets_last_update');
-
-            // Tunggu 2 detik untuk memastikan data disimpan di server
-            await new Promise(resolve => setTimeout(resolve, 2000));
-
-            // Muat ulang tiket dengan force refresh
-            await loadMyTickets(true);
-
-            return true;
-        } catch (err) {
-            console.error("Error refreshing ticket data:", err);
-            return false;
-        }
-    };
-
-    // Main mint handler - IMPROVED untuk monitor kecepatan minting
+    // Main mint handler
     const handleMintTicket = async (e) => {
         e.preventDefault();
 
-        // Validate inputs
         if (!concert || !ticketType || !seatNumber) {
             setError("Please complete all ticket information");
             return;
         }
 
-        // Start mint process with UI overlay
         setProcessingTx(true);
         setError('');
         setTxProgress(10);
         setTxMessage("Preparing ticket purchase...");
 
-        // Setup performance tracking
         const startTime = performance.now();
-        const perfMetrics = {
-            startTime,
-            steps: [],
-            lastStepTime: startTime
-        };
+        const perfMetrics = { startTime, steps: [], lastStepTime: startTime };
 
-        // Function to record performance step
         const recordStep = (stepName) => {
             const now = performance.now();
-            const stepTime = (now - perfMetrics.lastStepTime) / 1000; // convert to seconds
-
-            perfMetrics.steps.push({
-                name: stepName,
-                time: stepTime,
-                timestamp: now
-            });
-
+            const stepTime = (now - perfMetrics.lastStepTime) / 1000;
+            perfMetrics.steps.push({ name: stepName, time: stepTime, timestamp: now });
             perfMetrics.lastStepTime = now;
-            console.log(`Performance: ${stepName} took ${stepTime.toFixed(2)} seconds`);
         };
 
         try {
-            // ========== STEP 1: FIND SECTION & PRICE ==========
+            // Step 1: Setup
             const section = selectedConcert.sections.find(s => s.name === ticketType);
-            if (!section) {
-                throw new Error("Invalid ticket type");
-            }
+            if (!section) throw new Error("Invalid ticket type");
 
             const ticketPrice = section.price || 0.01;
-            console.log(`Selected section: ${section.name}, Price: ${ticketPrice} SOL`);
-
             recordStep("Initial setup and validation");
 
-            // ========== STEP 2: GET RECEIVER ADDRESS ==========
+            // Step 2: Get receiver address
             setTxProgress(15);
-            setTxMessage("Getting concert creator information...");
-            let receiverAddress = "2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU";  // Default fallback
+            setTxMessage("Getting payment information...");
 
+            let receiverAddress = "2upQ693dMu2PEdBp6JKnxRBWEimdbmbgNCvncbasP6TU";
             try {
-                // Try to use creator address from concert data
-                if (selectedConcert && selectedConcert.creator) {
+                if (selectedConcert?.creator) {
                     receiverAddress = selectedConcert.creator;
-                    console.log("Using concert creator from cached data:", receiverAddress);
                 } else if (concert) {
-                    // Fetch concert details if needed
                     const concertDetails = await ApiService.getConcert(concert);
-                    if (concertDetails && concertDetails.creator) {
+                    if (concertDetails?.creator) {
                         receiverAddress = concertDetails.creator;
-                        console.log("Payment will be sent to concert creator:", receiverAddress);
                     }
                 }
             } catch (err) {
                 console.warn("Error getting concert creator, using default address:", err);
             }
-
             recordStep("Get receiver wallet address");
 
-            // ========== STEP 3: CREATE BLOCKCHAIN TRANSACTION ==========
-            setTxProgress(20);
-            setTxMessage(`Creating blockchain transaction (${ticketPrice} SOL)...`);
-
-            // Indicates whether to use real blockchain tx (false) or dummy (true)
-            const skipBlockchain = false;  // Set to true for testing if needed
+            // Step 3: Create blockchain transaction
+            setTxProgress(25);
+            setTxMessage(`Creating blockchain payment (${ticketPrice} SOL)...`);
 
             let signature;
-            if (!skipBlockchain) {
-                try {
-                    const txStartTime = performance.now();
+            try {
+                signature = await blockchainService.createSolanaPayment(
+                    wallet,
+                    receiverAddress,
+                    ticketPrice,
+                    (progress) => setTxProgress(25 + Math.floor(progress * 0.4)),
+                    (message) => setTxMessage(message)
+                );
 
-                    // Create actual blockchain transaction
-                    signature = await blockchainService.createSolanaPayment(
-                        wallet,
-                        receiverAddress,
-                        ticketPrice,
-                        (progress) => {
-                            setTxProgress(20 + Math.floor(progress * 0.5));
-                        },
-                        (message) => {
-                            setTxMessage(message);
-                        }
-                    );
+                setTxProgress(65);
+                setTxMessage("Confirming blockchain transaction...");
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                recordStep("Create and confirm blockchain transaction");
 
-                    const txEndTime = performance.now();
-                    const txDuration = (txEndTime - txStartTime) / 1000;
-
-                    console.log(`Transaction created in ${txDuration.toFixed(2)} seconds with signature:`, signature);
-                    console.log("Transaction created with signature:", signature);
-
-                    // Wait for confirmation
-                    setTxProgress(70);
-                    setTxMessage("Waiting for blockchain confirmation...");
-
-                    // Start confirmation timer
-                    const confirmStartTime = performance.now();
-
-                    await new Promise(resolve => setTimeout(resolve, 3000));
-
-                    const confirmEndTime = performance.now();
-                    const confirmDuration = (confirmEndTime - confirmStartTime) / 1000;
-
-                    // Record blockchain transaction step
-                    recordStep("Create and sign blockchain transaction");
-
-                    // Record confirmation step
-                    perfMetrics.steps.push({
-                        name: "Blockchain confirmation",
-                        time: confirmDuration,
-                        timestamp: confirmEndTime
-                    });
-
-                    perfMetrics.lastStepTime = confirmEndTime;
-                } catch (txError) {
-                    console.error("Error creating blockchain transaction:", txError);
-
-                    // Record error
-                    recordStep("Blockchain transaction error");
-
-                    // Handle specific transaction errors
-                    if (txError.message.includes("Insufficient")) {
-                        throw new Error(`Insufficient balance. Required: ${ticketPrice} SOL. Your balance: ${solanaBalance.toFixed(4)} SOL`);
-                    } else if (txError.message.includes("reject")) {
-                        throw new Error("Transaction was rejected in your wallet. Please try again.");
-                    } else {
-                        throw txError;
-                    }
+            } catch (txError) {
+                recordStep("Blockchain transaction error");
+                if (txError.message.includes("Insufficient")) {
+                    throw new Error(`Insufficient balance. Required: ${ticketPrice} SOL. Your balance: ${solanaBalance.toFixed(4)} SOL`);
+                } else if (txError.message.includes("reject")) {
+                    throw new Error("Transaction was rejected in your wallet. Please try again.");
+                } else {
+                    throw txError;
                 }
-            } else {
-                // For development/testing use a dummy signature
-                signature = `dummy_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
-                console.log("DEVELOPMENT: Using dummy transaction signature:", signature);
-                setTxProgress(70);
-                await new Promise(resolve => setTimeout(resolve, 1000));
-
-                // Record development step
-                recordStep("Create dummy transaction (dev mode)");
             }
 
-            // ========== STEP 4: CALL API TO MINT TICKET ==========
-            setTxProgress(80);
-            setTxMessage("Creating ticket on server...");
+            // Step 4: Mint ticket
+            setTxProgress(75);
+            setTxMessage("Creating your ticket...");
 
-            // Prepare data for API
             const mintData = {
                 concertId: concert,
                 sectionName: ticketType,
@@ -456,147 +401,62 @@ const MintTicket = () => {
                 receiverAddress: receiverAddress
             };
 
-            console.log("Calling API to mint ticket with data:", mintData);
-
-            // Start API timer
-            const apiStartTime = performance.now();
-
-            // Call the API service
             const result = await ApiService.mintTicket(mintData);
-
-            const apiEndTime = performance.now();
-            const apiDuration = (apiEndTime - apiStartTime) / 1000;
-
-            // Record API step
             recordStep("API ticket minting");
 
-            console.log(`API mint took ${apiDuration.toFixed(2)} seconds, result:`, result);
-
             if (!result || !result.success) {
-                // If API returns error, throw with the error message
                 throw new Error(result?.msg || "Failed to create ticket on server");
             }
 
-            // ========== STEP 5: UPDATE UI & CACHE ==========
+            // Complete
             setTxProgress(100);
             setTxMessage("Ticket created successfully!");
             setSuccess(true);
 
-            // Force cache update for minted seats
             try {
-                await ApiService.updateMintedSeatsCache(concert, ticketType, seatNumber);
+                await ApiService.clearMintedSeatsCache(concert);
+                await ApiService.clearAllTicketCaches();
             } catch (cacheErr) {
-                console.warn("Non-critical: Error updating seats cache:", cacheErr);
+                console.warn("Non-critical: Error updating cache:", cacheErr);
             }
-
-            // Record cache update step
             recordStep("Cache updates");
 
-            // Clear all relevant caches
-            localStorage.removeItem('myTickets');
-            localStorage.removeItem(`my_tickets_false`);
-            localStorage.removeItem(`my_tickets_true`);
-            localStorage.removeItem(`minted_seats_${concert}`);
-            localStorage.removeItem('my_tickets_last_update');
-
-            // ========== STEP 6: CALCULATE FINAL PERFORMANCE METRICS ==========
+            // Calculate final metrics
             const endTime = performance.now();
-            const totalTime = (endTime - startTime) / 1000; // in seconds
-
-            // Calculate percentages
+            const totalTime = (endTime - startTime) / 1000;
             let totalStepTime = 0;
-            perfMetrics.steps.forEach(step => {
-                totalStepTime += step.time;
-            });
+            perfMetrics.steps.forEach(step => { totalStepTime += step.time; });
+            perfMetrics.steps.forEach(step => { step.percentage = (step.time / totalStepTime) * 100; });
 
-            perfMetrics.steps.forEach(step => {
-                step.percentage = (step.time / totalStepTime) * 100;
-            });
-
-            // Set final metrics
             const finalMetrics = {
                 totalTime,
                 steps: perfMetrics.steps,
                 timestamp: new Date().toISOString(),
                 userAgent: navigator.userAgent,
-                ticketData: {
-                    concertId: concert,
-                    sectionName: ticketType,
-                    seatNumber: seatNumber
-                }
+                ticketData: { concertId: concert, sectionName: ticketType, seatNumber: seatNumber }
             };
 
-            console.log("Final performance metrics:", finalMetrics);
             setPerformanceMetrics(finalMetrics);
 
-            // Use a longer delay to ensure server has time to process
             setTimeout(async () => {
                 try {
-                    // Final refresh to ensure data is current
                     await loadMyTickets(true);
-
-                    // Record metrics first before navigating away
-                    if (localStorage) {
-                        try {
-                            // Store metrics in localStorage for research
-                            const storedMetrics = JSON.parse(localStorage.getItem('mint_performance_metrics') || '[]');
-                            storedMetrics.push(finalMetrics);
-                            localStorage.setItem('mint_performance_metrics', JSON.stringify(storedMetrics));
-                        } catch (e) {
-                            console.error("Error storing metrics:", e);
-                        }
-                    }
-
-                    // Hide processing overlay
+                    const storedMetrics = JSON.parse(localStorage.getItem('mint_performance_metrics') || '[]');
+                    storedMetrics.push(finalMetrics);
+                    localStorage.setItem('mint_performance_metrics', JSON.stringify(storedMetrics));
                     setProcessingTx(false);
-
-                    // We don't navigate automatically now, so user can see performance metrics
-                    // User will navigate manually after reviewing the data
                 } catch (navErr) {
                     console.error("Error during final refresh:", navErr);
                     setProcessingTx(false);
                 }
-            }, 3000);
+            }, 2000);
 
         } catch (err) {
             console.error("Error during ticket minting:", err);
             setTxProgress(0);
-
-            // Record error timing
             recordStep("Error: " + err.message);
 
-            // Calculate error metrics
-            const errorTime = performance.now();
-            const totalErrorTime = (errorTime - startTime) / 1000;
-
-            // Calculate percentages for error case
-            let totalStepTime = 0;
-            perfMetrics.steps.forEach(step => {
-                totalStepTime += step.time;
-            });
-
-            perfMetrics.steps.forEach(step => {
-                step.percentage = (step.time / totalStepTime) * 100;
-            });
-
-            // Set error metrics
-            const errorMetrics = {
-                totalTime: totalErrorTime,
-                steps: perfMetrics.steps,
-                timestamp: new Date().toISOString(),
-                error: err.message,
-                userAgent: navigator.userAgent
-            };
-
-            console.log("Error performance metrics:", errorMetrics);
-
-            // Don't show performance metrics on error
-            // setPerformanceMetrics(errorMetrics);
-
-            // Extract and format error message
             let errorMessage = err.message || "Failed to create ticket";
-
-            // Clean up common error messages
             if (errorMessage.includes("Status: 400")) {
                 errorMessage = errorMessage.replace(" (Status: 400)", "");
             }
@@ -612,40 +472,59 @@ const MintTicket = () => {
 
     return (
         <div className="min-h-screen bg-gray-900 pt-16 pb-12 px-4">
-            {/* Transaction overlay */}
             {processingTx && <TransactionOverlay />}
 
-            <div className="max-w-xl mx-auto">
-                <h1 className="text-2xl font-bold text-white mb-6 text-center">Mint Concert Ticket</h1>
+            <div className="max-w-2xl mx-auto">
+                {/* Header */}
+                <div className="text-center mb-8">
+                    <h1 className="text-3xl font-bold text-white mb-2">Mint Concert Ticket</h1>
+                    <p className="text-gray-400">Secure your spot with blockchain-verified tickets</p>
+                </div>
 
                 {!wallet.connected ? (
-                    <div className="text-center py-12 bg-gray-800 rounded-lg">
-                        <h3 className="text-lg text-white mb-6">Connect your wallet to create a ticket</h3>
+                    <div className="text-center py-16 bg-gray-800 rounded-xl border border-gray-700">
+                        <div className="mb-6">
+                            <div className="w-16 h-16 bg-blue-600 rounded-full mx-auto mb-4 flex items-center justify-center">
+                                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                </svg>
+                            </div>
+                            <h3 className="text-xl text-white mb-2">Connect Your Wallet</h3>
+                            <p className="text-gray-400 mb-6">Connect your Solana wallet to start minting tickets</p>
+                        </div>
                         <WalletMultiButton />
                     </div>
                 ) : (
-                    <div className="bg-gray-800 rounded-lg p-6">
+                    <div className="bg-gray-800 rounded-xl p-8 border border-gray-700">
+                        {/* Step Indicator */}
+                        <StepIndicator />
+
+                        {/* Error Display */}
                         {error && (
-                            <div className="bg-red-500/10 border border-red-500 rounded-lg p-4 mb-6">
-                                <p className="text-red-500 text-sm">{error}</p>
+                            <div className="bg-red-900/20 border border-red-500 rounded-lg p-4 mb-6">
+                                <p className="text-red-400 text-sm">{error}</p>
                             </div>
                         )}
 
+                        {/* Success Display */}
                         {success && (
-                            <div className="bg-green-500/10 border border-green-500 rounded-lg p-4 mb-6">
-                                <p className="text-green-500 text-sm">
-                                    Ticket successfully created! You can view performance metrics below or navigate to your tickets.
-                                </p>
-                                <button
-                                    onClick={handleNavigateToMyTickets}
-                                    className="mt-2 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg transition-colors"
-                                >
-                                    Go to My Tickets
-                                </button>
+                            <div className="bg-green-900/20 border border-green-500 rounded-lg p-6 mb-6">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-green-400 font-medium">Ticket Successfully Created!</p>
+                                        <p className="text-green-300 text-sm">Your NFT ticket is now secured on the blockchain</p>
+                                    </div>
+                                    <button
+                                        onClick={handleNavigateToMyTickets}
+                                        className="bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg"
+                                    >
+                                        View Tickets
+                                    </button>
+                                </div>
                             </div>
                         )}
 
-                        {/* Performance Metrics Display */}
+                        {/* Performance Metrics */}
                         {performanceMetrics && (
                             <PerformanceMetricsCard
                                 metrics={performanceMetrics}
@@ -653,15 +532,21 @@ const MintTicket = () => {
                             />
                         )}
 
-                        <form onSubmit={handleMintTicket} className="space-y-6">
-                            {/* Concert */}
+                        <form onSubmit={handleMintTicket} className="space-y-8">
+                            {/* Step 1: Concert Selection */}
                             <div>
-                                <label className="block text-gray-300 text-sm font-medium mb-2">
-                                    Concert
+                                <label className="block text-gray-300 text-sm font-medium mb-3 flex items-center">
+                                    <span className={`w-6 h-6 rounded-full mr-2 flex items-center justify-center text-xs ${currentStep >= 2 ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'}`}>
+                                        {currentStep >= 2 ? '✓' : '1'}
+                                    </span>
+                                    Select Concert
                                 </label>
                                 {concertId ? (
-                                    <div className="bg-gray-700 p-3 rounded">
-                                        <p className="text-white">{selectedConcert?.name || 'Loading...'}</p>
+                                    <div className="bg-gray-700 p-4 rounded-lg">
+                                        <p className="text-white font-medium">{selectedConcert?.name || 'Loading...'}</p>
+                                        {selectedConcert?.venue && (
+                                            <p className="text-gray-400 text-sm">{selectedConcert.venue}</p>
+                                        )}
                                     </div>
                                 ) : (
                                     <select
@@ -670,13 +555,12 @@ const MintTicket = () => {
                                             setConcert(e.target.value);
                                             setTicketType('');
                                             setSeatNumber('');
-
                                             const selected = approvedConcerts.find(c => c.id === e.target.value);
                                             if (selected) setSelectedConcert(selected);
                                         }}
-                                        className="w-full bg-gray-700 border border-gray-600 rounded-lg p-3 text-white"
+                                        className="w-full bg-gray-700 border border-gray-600 rounded-lg p-4 text-white"
                                     >
-                                        <option value="">-- Select Concert --</option>
+                                        <option value="">Choose a concert...</option>
                                         {approvedConcerts.map(c => (
                                             <option key={c.id} value={c.id}>{c.name} - {c.venue}</option>
                                         ))}
@@ -684,13 +568,16 @@ const MintTicket = () => {
                                 )}
                             </div>
 
-                            {/* Ticket Type */}
+                            {/* Step 2: Ticket Type */}
                             {selectedConcert && (
                                 <div>
-                                    <label className="block text-gray-300 text-sm font-medium mb-2">
-                                        Ticket Type
+                                    <label className="block text-gray-300 text-sm font-medium mb-3 flex items-center">
+                                        <span className={`w-6 h-6 rounded-full mr-2 flex items-center justify-center text-xs ${currentStep >= 3 ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'}`}>
+                                            {currentStep >= 3 ? '✓' : '2'}
+                                        </span>
+                                        Choose Ticket Type
                                     </label>
-                                    <div className="grid grid-cols-2 gap-3">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         {selectedConcert.sections?.map((section) => (
                                             <button
                                                 key={section.name}
@@ -700,84 +587,171 @@ const MintTicket = () => {
                                                     setTicketType(section.name);
                                                     setSeatNumber('');
                                                 }}
-                                                className={`p-3 rounded-lg border text-center
-                                                    ${section.availableSeats <= 0 ?
+                                                className={`p-4 rounded-lg border text-left transition-all ${section.availableSeats <= 0 ?
                                                         'bg-gray-700 border-gray-600 text-gray-500 cursor-not-allowed' :
                                                         ticketType === section.name ?
-                                                            'bg-blue-600 border-blue-500 text-white' :
+                                                            'bg-blue-600 border-blue-400 text-white' :
                                                             'bg-gray-700 border-gray-600 text-white hover:border-blue-500'
                                                     }`}
                                             >
-                                                <div>{section.name}</div>
-                                                <div className="text-sm">{section.price} SOL</div>
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <h3 className="font-medium text-lg">{section.name}</h3>
+                                                    <span className={`px-2 py-1 rounded text-xs ${section.availableSeats <= 0 ? 'bg-red-900 text-red-400' :
+                                                            section.availableSeats < 10 ? 'bg-yellow-900 text-yellow-400' :
+                                                                'bg-green-900 text-green-400'
+                                                        }`}>
+                                                        {section.availableSeats > 0 ? `${section.availableSeats} left` : 'Sold Out'}
+                                                    </span>
+                                                </div>
+                                                <div className="text-2xl font-bold text-blue-400">{section.price} SOL</div>
                                             </button>
                                         ))}
                                     </div>
                                 </div>
                             )}
 
-                            {/* Seat Selection */}
+                            {/* Step 3: Seat Selection */}
                             {selectedConcert && ticketType && (
                                 <div>
-                                    <label className="block text-gray-300 text-sm font-medium mb-2">
-                                        Select Seat
+                                    <label className="block text-gray-300 text-sm font-medium mb-3 flex items-center">
+                                        <span className={`w-6 h-6 rounded-full mr-2 flex items-center justify-center text-xs ${currentStep >= 4 ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'}`}>
+                                            {currentStep >= 4 ? '✓' : '3'}
+                                        </span>
+                                        Pick Your Seat
                                     </label>
-                                    <SeatSelector
-                                        ticketType={ticketType}
-                                        concertId={concert}
-                                        selectedConcert={selectedConcert}
-                                        onSeatSelected={handleSeatSelected}
-                                        mintedSeats={mintedSeats}
-                                        ticketPrice={selectedConcert.sections.find(s => s.name === ticketType)?.price || 0.01}
-                                    />
+                                    <div className="bg-gray-900 rounded-lg p-6 border border-gray-700">
+                                        <SeatSelector
+                                            ticketType={ticketType}
+                                            concertId={concert}
+                                            selectedConcert={selectedConcert}
+                                            onSeatSelected={handleSeatSelected}
+                                            mintedSeats={mintedSeats}
+                                            ticketPrice={selectedConcert.sections.find(s => s.name === ticketType)?.price || 0.01}
+                                        />
+                                    </div>
                                 </div>
                             )}
 
-                            {/* Balance Info */}
-                            <div className="bg-gray-700 p-3 rounded-lg">
-                                <div className="flex justify-between items-center">
-                                    <span className="text-gray-300">Wallet Balance:</span>
-                                    <span className="text-white">{solanaBalance.toFixed(6)} SOL</span>
+                            {/* Step 4: Purchase Summary */}
+                            {selectedConcert && ticketType && seatNumber && (
+                                <div>
+                                    <label className="block text-gray-300 text-sm font-medium mb-3 flex items-center">
+                                        <span className="w-6 h-6 rounded-full mr-2 flex items-center justify-center text-xs bg-blue-500 text-white">4</span>
+                                        Complete Purchase
+                                    </label>
+
+                                    <div className="bg-gray-700 rounded-lg p-6 mb-6">
+                                        <h3 className="text-lg font-semibold text-white mb-4">Purchase Summary</h3>
+
+                                        <div className="space-y-3">
+                                            <div className="flex justify-between">
+                                                <span className="text-gray-300">Concert:</span>
+                                                <span className="text-white">{selectedConcert.name}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span className="text-gray-300">Venue:</span>
+                                                <span className="text-white">{selectedConcert.venue}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span className="text-gray-300">Ticket Type:</span>
+                                                <span className="text-blue-400">{ticketType}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span className="text-gray-300">Seat:</span>
+                                                <span className="text-purple-400">{seatNumber}</span>
+                                            </div>
+                                            <hr className="border-gray-600" />
+                                            <div className="flex justify-between text-lg">
+                                                <span className="text-gray-300">Total Price:</span>
+                                                <span className="text-green-400 font-bold">
+                                                    {selectedConcert.sections.find(s => s.name === ticketType)?.price || 0.01} SOL
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Wallet Info */}
+                                    <div className="bg-gray-700 rounded-lg p-4 mb-6">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-gray-300">Wallet Balance:</span>
+                                            <span className="text-white">{solanaBalance.toFixed(4)} SOL</span>
+                                        </div>
+
+                                        {ticketType && selectedConcert && (
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-gray-300">Required:</span>
+                                                <span className={`font-medium ${solanaBalance < (selectedConcert.sections.find(s => s.name === ticketType)?.price || 0) ? 'text-red-400' : 'text-green-400'}`}>
+                                                    {selectedConcert.sections.find(s => s.name === ticketType)?.price || 0.01} SOL
+                                                </span>
+                                            </div>
+                                        )}
+
+                                        {ticketType && solanaBalance < (selectedConcert?.sections.find(s => s.name === ticketType)?.price || 0) && (
+                                            <div className="mt-3 p-3 bg-red-900/20 border border-red-500 rounded-lg">
+                                                <span className="text-red-400 text-sm">Insufficient balance to purchase this ticket</span>
+                                            </div>
+                                        )}
+
+                                        {/* Payment destination */}
+                                        {selectedConcert && selectedConcert.creator && (
+                                            <div className="mt-3 pt-3 border-t border-gray-600">
+                                                <div className="flex justify-between items-center">
+                                                    <span className="text-gray-400 text-xs">Payment to:</span>
+                                                    <span className="text-gray-400 text-xs font-mono">
+                                                        {selectedConcert.creator.substring(0, 8)}...{selectedConcert.creator.substring(selectedConcert.creator.length - 6)}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
-
-                                {ticketType && selectedConcert && (
-                                    <div className="flex justify-between items-center mt-2">
-                                        <span className="text-gray-300">Ticket Price:</span>
-                                        <span className={`font-medium ${solanaBalance < (selectedConcert.sections.find(s => s.name === ticketType)?.price || 0) ? 'text-red-400' : 'text-green-400'}`}>
-                                            {selectedConcert.sections.find(s => s.name === ticketType)?.price || 0.01} SOL
-                                        </span>
-                                    </div>
-                                )}
-
-                                {ticketType && solanaBalance < (selectedConcert?.sections.find(s => s.name === ticketType)?.price || 0) && (
-                                    <div className="mt-2 text-red-400 text-sm">
-                                        Insufficient balance to purchase this ticket
-                                    </div>
-                                )}
-
-                                {/* Display creator information if available */}
-                                {selectedConcert && selectedConcert.creator && (
-                                    <div className="flex justify-between items-center mt-2">
-                                        <span className="text-gray-300">Payment to:</span>
-                                        <span className="text-gray-300 text-sm font-mono">
-                                            {selectedConcert.creator.substring(0, 6)}...{selectedConcert.creator.substring(selectedConcert.creator.length - 4)}
-                                        </span>
-                                    </div>
-                                )}
-                            </div>
+                            )}
 
                             {/* Submit Button */}
-                            <button
-                                type="submit"
-                                disabled={loading || !concert || !ticketType || !seatNumber || !isAuthenticated ||
-                                    (ticketType && solanaBalance < (selectedConcert?.sections.find(s => s.name === ticketType)?.price || 0))}
-                                className={`w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium
-                                    ${loading || !concert || !ticketType || !seatNumber || !isAuthenticated ||
-                                        (ticketType && solanaBalance < (selectedConcert?.sections.find(s => s.name === ticketType)?.price || 0)) ?
-                                        'opacity-50 cursor-not-allowed' : 'hover:bg-blue-700'}`}
-                            >
-                                {loading ? 'Processing...' : success ? 'Mint Another Ticket' : 'Mint Ticket'}
-                            </button>
+                            <div className="pt-6 border-t border-gray-700">
+                                <button
+                                    type="submit"
+                                    disabled={loading || !concert || !ticketType || !seatNumber || !isAuthenticated ||
+                                        (ticketType && solanaBalance < (selectedConcert?.sections.find(s => s.name === ticketType)?.price || 0))}
+                                    className={`w-full py-4 px-6 rounded-lg font-medium text-lg transition-all ${loading || !concert || !ticketType || !seatNumber || !isAuthenticated ||
+                                            (ticketType && solanaBalance < (selectedConcert?.sections.find(s => s.name === ticketType)?.price || 0)) ?
+                                            'bg-gray-600 text-gray-400 cursor-not-allowed' :
+                                            'bg-blue-600 hover:bg-blue-700 text-white'
+                                        }`}
+                                >
+                                    {loading ? (
+                                        <div className="flex items-center justify-center">
+                                            <LoadingSpinner size={5} />
+                                            <span className="ml-2">Processing...</span>
+                                        </div>
+                                    ) : success ? (
+                                        'Mint Another Ticket'
+                                    ) : (
+                                        <>
+                                            Mint Ticket {selectedConcert && ticketType ?
+                                                `- ${selectedConcert.sections.find(s => s.name === ticketType)?.price || 0.01} SOL` :
+                                                ''
+                                            }
+                                        </>
+                                    )}
+                                </button>
+
+                                {/* Security Notice */}
+                                <div className="mt-4 p-3 bg-blue-900/20 border border-blue-500 rounded-lg">
+                                    <div className="flex items-start">
+                                        <svg className="w-4 h-4 text-blue-400 mr-2 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                        </svg>
+                                        <div>
+                                            <p className="text-blue-400 text-xs font-medium mb-1">Secure Transaction</p>
+                                            <p className="text-blue-300 text-xs">
+                                                Your ticket will be minted as an NFT on the Solana blockchain.
+                                                This ensures authenticity and prevents fraud.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </form>
                     </div>
                 )}
