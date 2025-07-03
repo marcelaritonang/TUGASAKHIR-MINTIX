@@ -1,4 +1,4 @@
-// src/components/MyTickets.js - ENHANCED VERSION with Deleted Concert Support
+// src/components/MyTickets.js - COMPLETE ENHANCED VERSION with Better Loading
 import React, { useState, useEffect } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
@@ -30,6 +30,170 @@ const formatAddress = (address, start = 6, end = 4) => {
     if (!address) return 'N/A';
     return `${address.slice(0, start)}...${address.slice(-end)}`;
 };
+
+// ✅ ENHANCED LOADING COMPONENT
+const EnhancedLoadingSpinner = ({
+    type = 'initial',
+    message = '',
+    subMessage = '',
+    progress = null,
+    showProgress = false
+}) => {
+    const loadingMessages = {
+        initial: {
+            main: '🎫 Memuat tiket Anda...',
+            sub: 'Menganalisis data blockchain dan concert info'
+        },
+        refreshing: {
+            main: '🔄 Memperbarui tiket...',
+            sub: 'Sinkronisasi dengan database dan blockchain'
+        },
+        authenticating: {
+            main: '🔐 Memverifikasi akses...',
+            sub: 'Memeriksa koneksi wallet dan autentikasi'
+        },
+        processing: {
+            main: '⚙️ Memproses...',
+            sub: 'Mohon tunggu sebentar'
+        }
+    };
+
+    const currentMessage = loadingMessages[type] || loadingMessages.initial;
+
+    return (
+        <div className="min-h-screen bg-gray-900 pt-24 pb-16 px-4">
+            <div className="max-w-6xl mx-auto">
+                <div className="flex flex-col items-center justify-center mt-20">
+                    {/* Enhanced Spinner */}
+                    <div className="relative">
+                        <LoadingSpinner size="lg" />
+                        {/* Pulse ring effects */}
+                        <div className="absolute inset-0 border-4 border-purple-400 rounded-full animate-ping opacity-20"></div>
+                        <div className="absolute inset-2 border-2 border-blue-400 rounded-full animate-pulse opacity-30"></div>
+                    </div>
+
+                    {/* Loading Messages */}
+                    <div className="text-center mt-6 space-y-2">
+                        <p className="text-gray-300 text-lg font-medium">
+                            {message || currentMessage.main}
+                        </p>
+                        <p className="text-gray-500 text-sm">
+                            {subMessage || currentMessage.sub}
+                        </p>
+                    </div>
+
+                    {/* Progress Bar */}
+                    {showProgress && progress !== null && (
+                        <div className="w-64 mt-4">
+                            <div className="bg-gray-700 rounded-full h-2">
+                                <div
+                                    className="bg-purple-600 h-2 rounded-full transition-all duration-300"
+                                    style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
+                                ></div>
+                            </div>
+                            <p className="text-xs text-gray-400 mt-1 text-center">
+                                {Math.round(progress)}% selesai
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Loading Steps Indicator */}
+                    {type === 'initial' && (
+                        <div className="mt-8 space-y-2">
+                            <div className="flex items-center text-sm text-gray-400">
+                                <div className="w-2 h-2 bg-green-400 rounded-full mr-3"></div>
+                                Menghubungkan ke wallet
+                            </div>
+                            <div className="flex items-center text-sm text-gray-400">
+                                <div className="w-2 h-2 bg-yellow-400 rounded-full mr-3 animate-pulse"></div>
+                                Memuat data tiket
+                            </div>
+                            <div className="flex items-center text-sm text-gray-500">
+                                <div className="w-2 h-2 bg-gray-600 rounded-full mr-3"></div>
+                                Memverifikasi blockchain
+                            </div>
+                            <div className="flex items-center text-sm text-gray-500">
+                                <div className="w-2 h-2 bg-gray-600 rounded-full mr-3"></div>
+                                Menyiapkan tampilan
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Cancel button untuk loading yang lama */}
+                    {(type === 'refreshing' || type === 'processing') && (
+                        <button
+                            onClick={() => window.location.reload()}
+                            className="mt-6 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg text-sm transition-colors"
+                        >
+                            🔃 Refresh Halaman
+                        </button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// ✅ SKELETON LOADING COMPONENT
+const TicketCardSkeleton = () => (
+    <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 animate-pulse">
+        {/* Header skeleton */}
+        <div className="flex justify-between items-start mb-3">
+            <div className="flex-1">
+                <div className="h-5 bg-gray-600 rounded w-3/4 mb-2"></div>
+                <div className="h-4 bg-gray-700 rounded w-1/2 mb-1"></div>
+                <div className="h-3 bg-gray-700 rounded w-1/3"></div>
+            </div>
+            <div className="space-y-1">
+                <div className="h-6 bg-gray-600 rounded w-16"></div>
+                <div className="h-6 bg-gray-600 rounded w-16"></div>
+            </div>
+        </div>
+
+        {/* Details skeleton */}
+        <div className="flex justify-between items-center mb-3">
+            <div className="space-y-1">
+                <div className="h-3 bg-gray-700 rounded w-12"></div>
+                <div className="h-4 bg-gray-600 rounded w-16"></div>
+            </div>
+            <div className="space-y-1">
+                <div className="h-3 bg-gray-700 rounded w-12"></div>
+                <div className="h-4 bg-gray-600 rounded w-8"></div>
+            </div>
+            <div className="space-y-1">
+                <div className="h-3 bg-gray-700 rounded w-12"></div>
+                <div className="h-4 bg-gray-600 rounded w-16"></div>
+            </div>
+            <div className="space-y-1">
+                <div className="h-3 bg-gray-700 rounded w-12"></div>
+                <div className="h-4 bg-gray-600 rounded w-12"></div>
+            </div>
+        </div>
+
+        {/* Info panel skeleton */}
+        <div className="bg-gray-700/30 p-3 rounded-lg mb-3 space-y-2">
+            <div className="flex justify-between">
+                <div className="h-3 bg-gray-600 rounded w-16"></div>
+                <div className="h-3 bg-gray-600 rounded w-24"></div>
+            </div>
+            <div className="flex justify-between">
+                <div className="h-3 bg-gray-600 rounded w-12"></div>
+                <div className="h-3 bg-gray-600 rounded w-20"></div>
+            </div>
+            <div className="flex justify-between">
+                <div className="h-3 bg-gray-600 rounded w-16"></div>
+                <div className="h-3 bg-gray-600 rounded w-20"></div>
+            </div>
+        </div>
+
+        {/* Buttons skeleton */}
+        <div className="flex gap-2">
+            <div className="h-8 bg-gray-600 rounded w-20"></div>
+            <div className="h-8 bg-gray-600 rounded w-32"></div>
+        </div>
+        <div className="h-8 bg-gray-600 rounded w-full mt-3"></div>
+    </div>
+);
 
 // Enhanced Ticket Card Component with Better Concert Info Handling
 const TicketCard = ({ ticket, onViewDetails, refreshTickets }) => {
@@ -307,8 +471,8 @@ const TicketCard = ({ ticket, onViewDetails, refreshTickets }) => {
                     </div>
                     {/* Blockchain status badge */}
                     <div className={`px-2 py-1 rounded text-xs border ${blockchainStatus === 'verified' ? 'bg-green-900/30 text-green-400 border-green-700' :
-                            blockchainStatus === 'valid' ? 'bg-blue-900/30 text-blue-400 border-blue-700' :
-                                'bg-red-900/30 text-red-400 border-red-700'
+                        blockchainStatus === 'valid' ? 'bg-blue-900/30 text-blue-400 border-blue-700' :
+                            'bg-red-900/30 text-red-400 border-red-700'
                         }`}>
                         {blockchainStatus === 'verified' ? '✅ Verified' :
                             blockchainStatus === 'valid' ? '🔵 Valid TX' :
@@ -517,25 +681,38 @@ const TicketCard = ({ ticket, onViewDetails, refreshTickets }) => {
     );
 };
 
-// Enhanced Main MyTickets component
+// ✅ ENHANCED MAIN MYTICKETS COMPONENT
 const MyTickets = () => {
     const wallet = useWallet();
     const navigate = useNavigate();
     const { loadMyTickets } = useConcerts();
 
     const [tickets, setTickets] = useState([]);
-    const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [isAuthenticated, setIsAuthenticated] = useState(AuthService.isAuthenticated());
-    const [showDeletedConcerts, setShowDeletedConcerts] = useState(true); // Default to showing all tickets
+    const [showDeletedConcerts, setShowDeletedConcerts] = useState(true);
 
-    // Enhanced authentication check
+    // ✅ ENHANCED LOADING STATES
+    const [loadingStates, setLoadingStates] = useState({
+        initial: true,          // Loading pertama kali
+        refreshing: false,      // Loading saat refresh
+        authenticating: false,  // Loading saat check auth
+        processing: false       // Loading saat process actions
+    });
+
+    // ✅ ENHANCED AUTHENTICATION CHECK
     useEffect(() => {
         const checkAuth = async () => {
+            setLoadingStates(prev => ({ ...prev, authenticating: true }));
+
             const token = localStorage.getItem('auth_token');
             if (!token) {
                 setIsAuthenticated(false);
-                setLoading(false);
+                setLoadingStates(prev => ({
+                    ...prev,
+                    authenticating: false,
+                    initial: false
+                }));
                 return;
             }
 
@@ -544,28 +721,28 @@ const MyTickets = () => {
                 setIsAuthenticated(isValid);
                 if (!isValid) {
                     console.log("Auth token invalid");
-                    setLoading(false);
                 }
             } catch (err) {
                 console.error("Error validating token:", err);
                 setIsAuthenticated(false);
-                setLoading(false);
+            } finally {
+                setLoadingStates(prev => ({ ...prev, authenticating: false }));
             }
         };
 
         checkAuth();
     }, [wallet]);
 
-    // Enhanced load tickets with better concert info handling
+    // ✅ ENHANCED LOAD TICKETS WITH PROGRESS
     useEffect(() => {
         const loadTickets = async () => {
             if (!isAuthenticated) {
-                setLoading(false);
+                setLoadingStates(prev => ({ ...prev, initial: false }));
                 return;
             }
 
             try {
-                setLoading(true);
+                setLoadingStates(prev => ({ ...prev, initial: true }));
                 setError('');
                 console.log('Loading tickets with enhanced concert info handling...');
 
@@ -639,7 +816,7 @@ const MyTickets = () => {
                     console.error("Error loading cached tickets:", cacheError);
                 }
             } finally {
-                setLoading(false);
+                setLoadingStates(prev => ({ ...prev, initial: false }));
             }
         };
 
@@ -648,14 +825,10 @@ const MyTickets = () => {
         }
     }, [isAuthenticated]);
 
-    // Enhanced navigation and refresh functions
-    const handleViewDetails = (ticketId) => {
-        navigate(`/ticket/${ticketId}`);
-    };
-
+    // ✅ ENHANCED REFRESH FUNCTION
     const refreshTickets = async () => {
         try {
-            setLoading(true);
+            setLoadingStates(prev => ({ ...prev, refreshing: true }));
             console.log("🔄 Refreshing tickets...");
 
             const userTickets = await ApiService.getMyTickets(false, true); // Force refresh
@@ -705,8 +878,13 @@ const MyTickets = () => {
             console.error("Error refreshing tickets:", err);
             alert("Error refreshing tickets: " + (err.message || "Unknown error"));
         } finally {
-            setLoading(false);
+            setLoadingStates(prev => ({ ...prev, refreshing: false }));
         }
+    };
+
+    // Enhanced navigation and refresh functions
+    const handleViewDetails = (ticketId) => {
+        navigate(`/ticket/${ticketId}`);
     };
 
     // Enhanced filter logic for tickets
@@ -733,18 +911,13 @@ const MyTickets = () => {
         }).length
     };
 
-    // Enhanced loading state
-    if (loading) {
+    // ✅ ENHANCED LOADING STATE HANDLING
+    if (loadingStates.initial || loadingStates.authenticating) {
         return (
-            <div className="min-h-screen bg-gray-900 pt-24 pb-16 px-4">
-                <div className="max-w-6xl mx-auto">
-                    <div className="flex flex-col items-center justify-center mt-20">
-                        <LoadingSpinner size="lg" />
-                        <p className="text-gray-300 mt-4">🎫 Memuat tiket Anda...</p>
-                        <p className="text-gray-500 text-sm mt-2">Menganalisis data blockchain dan concert info</p>
-                    </div>
-                </div>
-            </div>
+            <EnhancedLoadingSpinner
+                type={loadingStates.authenticating ? 'authenticating' : 'initial'}
+                showProgress={loadingStates.initial}
+            />
         );
     }
 
@@ -827,7 +1000,47 @@ const MyTickets = () => {
         );
     }
 
-    // Enhanced main render
+    // ✅ ENHANCED RENDER TICKETS WITH SKELETON LOADING
+    const renderTicketsWithSkeleton = () => {
+        if (loadingStates.refreshing) {
+            return (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {/* Show skeleton cards */}
+                    {Array.from({ length: Math.min(6, tickets.length || 3) }).map((_, index) => (
+                        <TicketCardSkeleton key={`skeleton-${index}`} />
+                    ))}
+                </div>
+            );
+        }
+
+        // Normal ticket rendering
+        return (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filteredTickets.length > 0 ? (
+                    filteredTickets.map(ticket => (
+                        <TicketCard
+                            key={ticket._id}
+                            ticket={ticket}
+                            onViewDetails={handleViewDetails}
+                            refreshTickets={refreshTickets}
+                        />
+                    ))
+                ) : (
+                    <div className="col-span-3 text-center bg-gray-800 p-8 rounded-lg border border-gray-700">
+                        <div className="text-4xl mb-4">🔍</div>
+                        <p className="text-white text-lg">Tidak ada tiket ditemukan</p>
+                        <p className="text-gray-400 mt-2">
+                            {showDeletedConcerts
+                                ? "Anda belum memiliki tiket sama sekali"
+                                : "Coba aktifkan 'Tampilkan tiket dari konser yang dihapus' untuk melihat semua tiket"}
+                        </p>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    // ✅ ENHANCED MAIN RENDER
     return (
         <div className="min-h-screen bg-gray-900 pt-24 pb-16 px-4">
             <div className="max-w-6xl mx-auto">
@@ -841,12 +1054,21 @@ const MyTickets = () => {
                             Kelola koleksi tiket NFT Anda yang diamankan blockchain
                         </p>
                     </div>
+
+                    {/* ✅ ENHANCED REFRESH BUTTON */}
                     <button
                         onClick={refreshTickets}
-                        disabled={loading}
+                        disabled={loadingStates.refreshing}
                         className="mt-4 sm:mt-0 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
                     >
-                        {loading ? '🔄 Memperbarui...' : '🔄 Refresh'}
+                        {loadingStates.refreshing ? (
+                            <>
+                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                Memperbarui...
+                            </>
+                        ) : (
+                            '🔄 Refresh'
+                        )}
                     </button>
                 </div>
 
@@ -896,29 +1118,8 @@ const MyTickets = () => {
                     )}
                 </div>
 
-                {/* Enhanced tickets grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {filteredTickets.length > 0 ? (
-                        filteredTickets.map(ticket => (
-                            <TicketCard
-                                key={ticket._id}
-                                ticket={ticket}
-                                onViewDetails={handleViewDetails}
-                                refreshTickets={refreshTickets}
-                            />
-                        ))
-                    ) : (
-                        <div className="col-span-3 text-center bg-gray-800 p-8 rounded-lg border border-gray-700">
-                            <div className="text-4xl mb-4">🔍</div>
-                            <p className="text-white text-lg">Tidak ada tiket ditemukan</p>
-                            <p className="text-gray-400 mt-2">
-                                {showDeletedConcerts
-                                    ? "Anda belum memiliki tiket sama sekali"
-                                    : "Coba aktifkan 'Tampilkan tiket dari konser yang dihapus' untuk melihat semua tiket"}
-                            </p>
-                        </div>
-                    )}
-                </div>
+                {/* ✅ ENHANCED TICKETS GRID WITH SKELETON LOADING */}
+                {renderTicketsWithSkeleton()}
 
                 {/* Enhanced action links */}
                 <div className="mt-8 flex flex-wrap justify-center gap-4">
