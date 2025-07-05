@@ -1,4 +1,4 @@
-// src/components/TicketMarketplace.js - COMPLETE FIXED VERSION
+// src/components/TicketMarketplace.js - ENHANCED VERSION: Show All Tickets with Better UX
 import React, { useState, useEffect } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
@@ -43,7 +43,7 @@ const MarketplaceLoadingSpinner = ({ message = 'Memuat marketplace tiket...' }) 
                     <div className="absolute inset-2 border-2 border-blue-400 rounded-full animate-pulse opacity-30"></div>
                 </div>
                 <p className="text-gray-300 mt-4 text-lg">{message}</p>
-                <p className="text-gray-500 text-sm mt-2">Menganalisis tiket yang dijual pengguna</p>
+                <p className="text-gray-500 text-sm mt-2">Menganalisis semua tiket yang dijual</p>
 
                 {/* Loading steps */}
                 <div className="mt-8 space-y-2">
@@ -65,7 +65,7 @@ const MarketplaceLoadingSpinner = ({ message = 'Memuat marketplace tiket...' }) 
     </div>
 );
 
-// ✅ ENHANCED Marketplace Ticket Card Component
+// ✅ ENHANCED Marketplace Ticket Card Component dengan Better UX
 const MarketplaceTicketCard = ({ ticket, onBuy, isOwner, onRefresh }) => {
     const [loading, setLoading] = useState(false);
     const wallet = useWallet();
@@ -91,14 +91,7 @@ const MarketplaceTicketCard = ({ ticket, onBuy, isOwner, onRefresh }) => {
     // Fungsi untuk menangani klik beli
     const handleBuyClick = (e) => {
         e.preventDefault();
-        if (onBuy && hasValidPrice) onBuy(ticket);
-    };
-
-    // Fungsi untuk melihat detail tiket
-    const handleViewSellerProfile = () => {
-        if (ticket.owner) {
-            console.log(`Viewing seller profile for ${ticket.owner}`);
-        }
+        if (onBuy && hasValidPrice && !isOwner) onBuy(ticket);
     };
 
     // ✅ ENHANCED: Handle manage ticket
@@ -106,35 +99,63 @@ const MarketplaceTicketCard = ({ ticket, onBuy, isOwner, onRefresh }) => {
         navigate(`/ticket/${ticket._id}`);
     };
 
+    // ✅ ENHANCED: Handle share ticket
+    const handleShareTicket = () => {
+        const shareUrl = `${window.location.origin}/marketplace?ticket=${ticket._id}`;
+        if (navigator.share) {
+            navigator.share({
+                title: `Tiket ${concertInfo.name}`,
+                text: `Lihat tiket konser ${concertInfo.name} seharga ${ticket.listingPrice} SOL`,
+                url: shareUrl
+            });
+        } else {
+            navigator.clipboard.writeText(shareUrl);
+            // You can add a toast notification here
+            console.log('Link copied to clipboard');
+        }
+    };
+
     return (
-        <div className="bg-gray-800 rounded-lg border border-gray-700 hover:border-indigo-500 transition-colors p-5">
-            {/* ✅ ENHANCED: Better concert info display */}
+        <div className={`bg-gray-800 rounded-lg border transition-all duration-300 p-5 ${isOwner
+                ? 'border-blue-500/50 shadow-lg shadow-blue-500/10'
+                : 'border-gray-700 hover:border-indigo-500 hover:shadow-lg hover:shadow-indigo-500/10'
+            }`}>
+            {/* ✅ ENHANCED: Better concert info display dengan owner indicator */}
             <div className="mb-4">
                 <div className="flex justify-between items-start">
                     <div className="flex-1">
-                        <h3 className="text-white font-medium text-lg">{concertInfo.name}</h3>
+                        <div className="flex items-center gap-2 mb-1">
+                            <h3 className="text-white font-medium text-lg">{concertInfo.name}</h3>
+                            {isOwner && (
+                                <div className="px-2 py-1 rounded-full text-xs bg-blue-500 text-white font-medium">
+                                    ANDA
+                                </div>
+                            )}
+                        </div>
                         <p className="text-gray-400">{concertInfo.venue}</p>
                         {concertInfo.date && (
                             <p className="text-gray-400 text-sm">{formatDate(concertInfo.date)}</p>
                         )}
                     </div>
 
-                    {/* Status badges */}
+                    {/* ✅ ENHANCED: Status badges dengan better styling */}
                     <div className="flex flex-col gap-1">
-                        {isOwner && (
-                            <div className="px-2 py-1 rounded text-xs bg-blue-900/30 text-blue-400 border border-blue-700">
-                                Tiket Anda
-                            </div>
-                        )}
-                        <div className="px-2 py-1 rounded text-xs bg-green-900/30 text-green-400 border border-green-700">
+                        <div className="px-2 py-1 rounded text-xs bg-green-900/30 text-green-400 border border-green-700 flex items-center gap-1">
+                            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
                             Dijual
                         </div>
+                        {/* Verified badge jika ada */}
+                        {ticket.blockchainVerified && (
+                            <div className="px-2 py-1 rounded text-xs bg-purple-900/30 text-purple-400 border border-purple-700">
+                                ✅ Verified
+                            </div>
+                        )}
                     </div>
                 </div>
 
                 {/* Warning jika concert info tidak lengkap */}
                 {!concertInfo.hasInfo && (
-                    <div className="mt-2 text-xs text-yellow-400">
+                    <div className="mt-2 p-2 bg-yellow-900/20 border border-yellow-700 rounded text-xs text-yellow-400">
                         ⚠️ Informasi konser tidak lengkap
                     </div>
                 )}
@@ -142,7 +163,7 @@ const MarketplaceTicketCard = ({ ticket, onBuy, isOwner, onRefresh }) => {
 
             {/* ✅ ENHANCED: Ticket details dengan better layout */}
             <div className="bg-gray-700/30 rounded-lg p-3 mb-4">
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-3">
                     <div>
                         <p className="text-gray-400 text-sm">Seksi</p>
                         <p className="text-white font-medium">{ticket.sectionName || 'Regular'}</p>
@@ -153,93 +174,130 @@ const MarketplaceTicketCard = ({ ticket, onBuy, isOwner, onRefresh }) => {
                     </div>
                 </div>
 
-                {/* Ticket ID untuk debugging */}
-                {process.env.NODE_ENV === 'development' && (
-                    <div className="mt-2 pt-2 border-t border-gray-600">
-                        <p className="text-gray-500 text-xs">ID: {formatAddress(ticket._id, 8, 8)}</p>
+                {/* ✅ ENHANCED: Additional ticket info */}
+                <div className="mt-3 pt-3 border-t border-gray-600 grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                        <p className="text-gray-500">Original Price</p>
+                        <p className="text-gray-300">{ticket.price || ticket.originalPrice || 'N/A'} SOL</p>
                     </div>
-                )}
+                    <div>
+                        <p className="text-gray-500">Listed</p>
+                        <p className="text-gray-300">{formatDate(ticket.listingDate)}</p>
+                    </div>
+                </div>
             </div>
 
-            {/* ✅ ENHANCED: Pricing info dengan better validation */}
-            <div className="bg-indigo-900/20 border border-indigo-700 rounded-lg p-4 mb-4">
+            {/* ✅ ENHANCED: Pricing info dengan better validation dan comparison */}
+            <div className={`border rounded-lg p-4 mb-4 ${isOwner
+                    ? 'bg-blue-900/20 border-blue-700'
+                    : 'bg-indigo-900/20 border-indigo-700'
+                }`}>
                 <div className="flex justify-between items-center">
                     <div>
-                        <p className="text-indigo-400 text-sm">Harga</p>
+                        <p className={`text-sm ${isOwner ? 'text-blue-400' : 'text-indigo-400'}`}>
+                            {isOwner ? 'Harga Jual Anda' : 'Harga'}
+                        </p>
                         {hasValidPrice ? (
-                            <p className="text-white font-medium text-2xl">{ticket.listingPrice} SOL</p>
+                            <div className="flex items-baseline gap-2">
+                                <p className="text-white font-bold text-2xl">{ticket.listingPrice} SOL</p>
+                                {/* Price comparison */}
+                                {ticket.price && parseFloat(ticket.listingPrice) !== parseFloat(ticket.price) && (
+                                    <span className={`text-sm ${parseFloat(ticket.listingPrice) > parseFloat(ticket.price)
+                                            ? 'text-red-400'
+                                            : 'text-green-400'
+                                        }`}>
+                                        ({parseFloat(ticket.listingPrice) > parseFloat(ticket.price) ? '+' : ''}
+                                        {(((parseFloat(ticket.listingPrice) - parseFloat(ticket.price)) / parseFloat(ticket.price)) * 100).toFixed(1)}%)
+                                    </span>
+                                )}
+                            </div>
                         ) : (
                             <p className="text-red-400 font-medium text-lg">Harga tidak valid</p>
                         )}
                     </div>
+
+                    {/* ✅ ENHANCED: Market indicator */}
                     <div className="text-right">
-                        <p className="text-gray-400 text-xs">Terdaftar pada</p>
-                        <p className="text-white text-sm">{formatDate(ticket.listingDate)}</p>
+                        <div className={`px-2 py-1 rounded text-xs ${parseFloat(ticket.listingPrice) <= parseFloat(ticket.price || 0)
+                                ? 'bg-green-900/30 text-green-400 border border-green-700'
+                                : 'bg-orange-900/30 text-orange-400 border border-orange-700'
+                            }`}>
+                            {parseFloat(ticket.listingPrice) <= parseFloat(ticket.price || 0)
+                                ? '💰 Fair Price'
+                                : '📈 Premium'
+                            }
+                        </div>
                     </div>
                 </div>
+            </div>
 
-                {/* Original price comparison jika ada */}
-                {ticket.originalPrice && hasValidPrice && (
-                    <div className="mt-2 pt-2 border-t border-indigo-800">
+            {/* ✅ ENHANCED: Seller info dengan better styling */}
+            <div className="flex justify-between items-center text-sm mb-4 p-3 bg-gray-700/20 rounded-lg">
+                <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full flex items-center justify-center text-xs text-white">
+                        {isOwner ? 'YOU' : '👤'}
+                    </div>
+                    <div>
                         <p className="text-gray-400 text-xs">
-                            Harga asli: <span className="text-gray-300">{ticket.originalPrice} SOL</span>
-                            {parseFloat(ticket.listingPrice) !== parseFloat(ticket.originalPrice) && (
-                                <span className={`ml-2 ${parseFloat(ticket.listingPrice) > parseFloat(ticket.originalPrice) ? 'text-red-400' : 'text-green-400'}`}>
-                                    ({parseFloat(ticket.listingPrice) > parseFloat(ticket.originalPrice) ? '+' : ''}
-                                    {(((parseFloat(ticket.listingPrice) - parseFloat(ticket.originalPrice)) / parseFloat(ticket.originalPrice)) * 100).toFixed(1)}%)
-                                </span>
-                            )}
+                            {isOwner ? 'Penjual: Anda' : 'Penjual:'}
+                        </p>
+                        <p className="text-indigo-400 font-mono text-sm" title={ticket.owner}>
+                            {formatAddress(ticket.owner, 8, 6)}
                         </p>
                     </div>
-                )}
-            </div>
-
-            {/* ✅ ENHANCED: Seller info */}
-            <div className="flex justify-between items-center text-sm mb-4">
-                <div>
-                    <span className="text-gray-400">Penjual:</span>
-                    <span
-                        className="text-indigo-400 ml-1 hover:underline cursor-pointer"
-                        onClick={handleViewSellerProfile}
-                        title={ticket.owner}
-                    >
-                        {formatAddress(ticket.owner)}
-                    </span>
                 </div>
-                {ticket.sellerRating && (
-                    <div className="flex items-center">
-                        <span className="text-yellow-400 mr-1">★</span>
-                        <span className="text-white">{ticket.sellerRating}/5</span>
-                    </div>
-                )}
+
+                {/* ✅ Share button */}
+                <button
+                    onClick={handleShareTicket}
+                    className="p-2 text-gray-400 hover:text-indigo-400 transition-colors"
+                    title="Share this ticket"
+                >
+                    📤
+                </button>
             </div>
 
-            {/* ✅ ENHANCED: Action buttons dengan better logic */}
-            <div className="flex flex-col gap-2">
+            {/* ✅ ENHANCED: Action buttons dengan better logic dan styling */}
+            <div className="flex flex-col gap-3">
                 {isOwner ? (
                     <>
-                        <div className="bg-yellow-900/20 border border-yellow-700 rounded-lg p-3">
-                            <p className="text-yellow-400 text-sm text-center font-medium">
-                                🏪 Ini adalah tiket Anda yang sedang dijual
+                        {/* Owner actions */}
+                        <div className="bg-blue-900/20 border border-blue-700 rounded-lg p-3">
+                            <p className="text-blue-400 text-sm text-center font-medium flex items-center justify-center gap-2">
+                                <span className="text-lg">🏪</span>
+                                Tiket Anda yang sedang dijual
+                            </p>
+                            <p className="text-blue-300 text-xs text-center mt-1">
+                                Anda akan menerima pembayaran langsung ke wallet
                             </p>
                         </div>
-                        <button
-                            onClick={handleManageTicket}
-                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg transition-colors"
-                        >
-                            📋 Kelola Tiket
-                        </button>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <button
+                                onClick={handleManageTicket}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-3 rounded-lg transition-colors text-sm font-medium"
+                            >
+                                📋 Kelola
+                            </button>
+                            <button
+                                onClick={handleShareTicket}
+                                className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-3 rounded-lg transition-colors text-sm font-medium"
+                            >
+                                📤 Share
+                            </button>
+                        </div>
                     </>
                 ) : (
                     <>
+                        {/* Buyer actions */}
                         <button
                             onClick={handleBuyClick}
                             disabled={loading || !wallet.connected || !hasValidPrice}
-                            className={`w-full py-3 px-4 rounded-lg font-medium transition-colors ${!hasValidPrice
+                            className={`w-full py-3 px-4 rounded-lg font-medium transition-all duration-300 ${!hasValidPrice
                                     ? 'bg-red-600/50 text-red-300 cursor-not-allowed'
                                     : loading || !wallet.connected
                                         ? 'bg-gray-600 text-gray-300 cursor-not-allowed'
-                                        : 'bg-green-600 hover:bg-green-700 text-white'
+                                        : 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5'
                                 }`}
                         >
                             {loading ? (
@@ -252,18 +310,24 @@ const MarketplaceTicketCard = ({ ticket, onBuy, isOwner, onRefresh }) => {
                             ) : !wallet.connected ? (
                                 '🔐 Hubungkan Wallet'
                             ) : (
-                                '💰 Beli Tiket'
+                                <div className="flex items-center justify-center gap-2">
+                                    <span>💰 Beli Tiket</span>
+                                    <span className="text-sm opacity-75">({ticket.listingPrice} SOL)</span>
+                                </div>
                             )}
                         </button>
 
+                        {/* ✅ ENHANCED: Helper messages */}
                         {!wallet.connected && (
-                            <div className="text-center text-sm text-yellow-400">
+                            <div className="text-center text-sm text-yellow-400 bg-yellow-900/20 border border-yellow-700 rounded p-2">
+                                <span className="text-base mr-1">⚠️</span>
                                 Hubungkan wallet untuk membeli tiket
                             </div>
                         )}
 
                         {!hasValidPrice && (
-                            <div className="text-center text-sm text-red-400">
+                            <div className="text-center text-sm text-red-400 bg-red-900/20 border border-red-700 rounded p-2">
+                                <span className="text-base mr-1">❌</span>
                                 Tiket ini memiliki harga yang tidak valid
                             </div>
                         )}
@@ -277,6 +341,8 @@ const MarketplaceTicketCard = ({ ticket, onBuy, isOwner, onRefresh }) => {
                     <p className="text-blue-400">DEBUG INFO:</p>
                     <p className="text-gray-400">isListed: {ticket.isListed ? 'true' : 'false'}</p>
                     <p className="text-gray-400">Owner: {ticket.owner}</p>
+                    <p className="text-gray-400">Current User: {wallet.publicKey?.toString()}</p>
+                    <p className="text-gray-400">Is Owner: {isOwner ? 'true' : 'false'}</p>
                     <p className="text-gray-400">Price: {ticket.listingPrice}</p>
                     <p className="text-gray-400">Valid Price: {hasValidPrice ? 'true' : 'false'}</p>
                 </div>
@@ -300,8 +366,8 @@ const TicketMarketplace = () => {
     // Filter states
     const [filterConcert, setFilterConcert] = useState('');
     const [filterSection, setFilterSection] = useState('');
-    const [sortBy, setSortBy] = useState('price_asc');
-    const [showOnlyAvailable, setShowOnlyAvailable] = useState(true);
+    const [sortBy, setSortBy] = useState('date_desc'); // Changed default to newest first
+    const [viewMode, setViewMode] = useState('all'); // all, available, mine
 
     // Purchase states
     const [selectedTicket, setSelectedTicket] = useState(null);
@@ -325,32 +391,26 @@ const TicketMarketplace = () => {
         checkAuth();
     }, [wallet]);
 
-    // ✅ FIXED: Enhanced load marketplace tickets dengan debugging
+    // ✅ ENHANCED: Load marketplace tickets - SHOW ALL TICKETS
     useEffect(() => {
         const loadMarketplaceTickets = async () => {
             try {
                 setLoading(true);
                 setError('');
-                console.log('🏪 Loading marketplace tickets...');
+                console.log('🏪 Loading ALL marketplace tickets...');
 
-                // ✅ FIXED: Use the marketplace-specific API endpoint
                 let marketplaceTickets;
 
                 try {
-                    // Try marketplace endpoint first
+                    // Use API service to get tickets
                     marketplaceTickets = await ApiService.getTicketsForSale(filterConcert);
                     console.log(`📋 Got ${marketplaceTickets?.length || 0} tickets from marketplace API`);
                 } catch (apiErr) {
-                    console.warn('⚠️ Marketplace API failed, trying alternative method:', apiErr);
+                    console.warn('⚠️ Marketplace API failed, trying fallback:', apiErr);
 
-                    // ✅ FALLBACK: Try getting tickets from /tickets/market endpoint
+                    // Fallback to direct API call
                     try {
-                        const response = await fetch('/api/tickets/market', {
-                            headers: {
-                                'x-auth-token': localStorage.getItem('auth_token')
-                            }
-                        });
-
+                        const response = await fetch('/api/tickets/market');
                         if (response.ok) {
                             const data = await response.json();
                             marketplaceTickets = data.tickets || [];
@@ -360,7 +420,7 @@ const TicketMarketplace = () => {
                         }
                     } catch (fallbackErr) {
                         console.error('❌ Fallback API also failed:', fallbackErr);
-                        throw new Error('Could not load marketplace tickets from any source');
+                        throw new Error('Could not load marketplace tickets');
                     }
                 }
 
@@ -381,62 +441,22 @@ const TicketMarketplace = () => {
                         parseFloat(ticket.listingPrice) > 0;
                     const hasOwner = ticket.owner && ticket.owner.length > 0;
 
-                    const isValid = isListed && hasValidPrice && hasOwner;
-
-                    if (!isValid) {
-                        console.log(`🚫 Filtering out invalid ticket ${ticket._id}:`, {
-                            isListed,
-                            hasValidPrice,
-                            hasOwner,
-                            listingPrice: ticket.listingPrice
-                        });
-                    }
-
-                    return isValid;
+                    return isListed && hasValidPrice && hasOwner;
                 });
 
                 console.log(`✅ Filtered to ${validListedTickets.length} valid listed tickets`);
 
-                // ✅ ENHANCED: Enhance ticket data dengan concert info
-                const enhancedTickets = await Promise.allSettled(
-                    validListedTickets.map(async (ticket) => {
-                        try {
-                            let enhancedTicket = { ...ticket };
+                // ✅ ENHANCED: Process tickets dengan concert info
+                const processedTickets = validListedTickets.map(ticket => ({
+                    ...ticket,
+                    // Ensure we have all necessary fields
+                    concertName: ticket.concertName || 'Unknown Concert',
+                    concertVenue: ticket.concertVenue || 'Unknown Venue',
+                    concertDate: ticket.concertDate || null,
+                    concertExists: ticket.concertExists !== false
+                }));
 
-                            // Get concert data if not already included
-                            if (!ticket.concertName && ticket.concertId) {
-                                try {
-                                    const concertData = await ApiService.getConcert(ticket.concertId);
-                                    if (concertData) {
-                                        enhancedTicket = {
-                                            ...enhancedTicket,
-                                            concertName: concertData.name,
-                                            concertVenue: concertData.venue,
-                                            concertDate: concertData.date
-                                        };
-                                    }
-                                } catch (concertErr) {
-                                    console.warn(`⚠️ Could not get concert data for ${ticket.concertId}:`, concertErr);
-                                    // Keep original ticket data
-                                }
-                            }
-
-                            return enhancedTicket;
-                        } catch (err) {
-                            console.error(`❌ Error enhancing ticket ${ticket._id}:`, err);
-                            return ticket; // Return original ticket if enhancement fails
-                        }
-                    })
-                );
-
-                // Extract successful results
-                const processedTickets = enhancedTickets
-                    .filter(result => result.status === 'fulfilled')
-                    .map(result => result.value);
-
-                console.log(`🎯 Successfully processed ${processedTickets.length} tickets`);
-
-                // ✅ ENHANCED: Apply filters and sorting
+                // ✅ ENHANCED: Apply filters
                 let filteredTickets = processedTickets;
 
                 // Filter by concert if selected
@@ -453,15 +473,20 @@ const TicketMarketplace = () => {
                     );
                 }
 
-                // Filter out tickets owned by current user if showOnlyAvailable is true
-                if (showOnlyAvailable && wallet.connected && wallet.publicKey) {
+                // ✅ ENHANCED: Apply view mode filter
+                if (viewMode === 'available' && wallet.connected && wallet.publicKey) {
                     const userAddress = wallet.publicKey.toString();
                     filteredTickets = filteredTickets.filter(
                         ticket => ticket.owner !== userAddress
                     );
+                } else if (viewMode === 'mine' && wallet.connected && wallet.publicKey) {
+                    const userAddress = wallet.publicKey.toString();
+                    filteredTickets = filteredTickets.filter(
+                        ticket => ticket.owner === userAddress
+                    );
                 }
 
-                // ✅ ENHANCED: Apply sorting dengan better error handling
+                // ✅ ENHANCED: Apply sorting
                 filteredTickets.sort((a, b) => {
                     switch (sortBy) {
                         case 'price_asc':
@@ -472,6 +497,8 @@ const TicketMarketplace = () => {
                             return new Date(a.listingDate || 0) - new Date(b.listingDate || 0);
                         case 'date_desc':
                             return new Date(b.listingDate || 0) - new Date(a.listingDate || 0);
+                        case 'concert_name':
+                            return (a.concertName || '').localeCompare(b.concertName || '');
                         default:
                             return 0;
                     }
@@ -493,7 +520,7 @@ const TicketMarketplace = () => {
         };
 
         loadMarketplaceTickets();
-    }, [filterConcert, filterSection, sortBy, showOnlyAvailable, wallet.connected, wallet.publicKey]);
+    }, [filterConcert, filterSection, sortBy, viewMode, wallet.connected, wallet.publicKey]);
 
     // Fetch balances when wallet connects
     useEffect(() => {
@@ -524,14 +551,12 @@ const TicketMarketplace = () => {
         setError('');
         console.log('🔄 Manual refresh triggered');
 
-        // Force reload by clearing any cached data
         try {
             ApiService.clearAllCaches();
         } catch (err) {
             console.warn('Could not clear caches:', err);
         }
 
-        // Trigger reload by updating a dependency
         setLastRefresh(Date.now());
     };
 
@@ -541,7 +566,7 @@ const TicketMarketplace = () => {
         setShowBuyConfirm(true);
     };
 
-    // ✅ COMPLETE: Handle buy confirmation dengan COMPLETE error handling
+    // ✅ Buy ticket process (keep existing implementation)
     const processBuyTicket = async () => {
         if (!selectedTicket || !wallet.connected) {
             console.error("Cannot process purchase: No selected ticket or wallet not connected");
@@ -564,7 +589,6 @@ const TicketMarketplace = () => {
                     if (!success) {
                         throw new Error("Authentication failed");
                     }
-                    console.log("Authentication successful");
                     setIsAuthenticated(true);
                 } catch (authError) {
                     throw new Error("Failed to authenticate with wallet: " + authError.message);
@@ -598,14 +622,13 @@ const TicketMarketplace = () => {
 
             // Process payment
             setPurchaseProgress(30);
-            setPurchaseMessage(`Membuat transaksi blockchain untuk membayar penjual...`);
+            setPurchaseMessage(`Membuat transaksi blockchain...`);
 
-            // Create payment DIRECTLY to ticket owner (penjual)
             let signature;
             try {
                 signature = await blockchainService.createSolanaPayment(
                     wallet,
-                    sellerAddress, // Pay directly to the ticket owner
+                    sellerAddress,
                     ticketPrice,
                     (progress) => {
                         setPurchaseProgress(30 + Math.floor(progress * 0.5));
@@ -618,8 +641,6 @@ const TicketMarketplace = () => {
                 console.log("Transaction created with signature:", signature);
             } catch (txError) {
                 console.error("Transaction error:", txError);
-
-                // Handle specific transaction errors
                 if (txError.message.includes("Insufficient")) {
                     throw new Error(`Saldo tidak mencukupi. Dibutuhkan: ${ticketPrice} SOL.`);
                 } else if (txError.message.includes("reject")) {
@@ -629,7 +650,6 @@ const TicketMarketplace = () => {
                 }
             }
 
-            // Ensure transaction signature is valid
             if (!signature) {
                 throw new Error("Tidak mendapatkan signature transaksi valid");
             }
@@ -638,7 +658,6 @@ const TicketMarketplace = () => {
             setPurchaseProgress(80);
             setPurchaseMessage("Menyelesaikan proses pembelian tiket...");
 
-            console.log(`Calling buyTicket API with ticketId: ${selectedTicket._id}, signature: ${signature}`);
             const result = await ApiService.buyTicket(selectedTicket._id, signature);
 
             if (!result || !result.success) {
@@ -657,29 +676,8 @@ const TicketMarketplace = () => {
                 console.warn("Non-critical: Could not refresh balance", balanceErr);
             }
 
-            // ✅ ENHANCED: Better cache clearing dan UI update
-            try {
-                // Clear semua cache terkait tiket
-                ApiService.clearAllCaches();
-
-                // Remove purchased ticket dari local state
-                setTickets(prevTickets => prevTickets.filter(t => t._id !== selectedTicket._id));
-
-                // Clear marketplace cache
-                const marketplaceTickets = JSON.parse(localStorage.getItem('marketplaceTickets') || '[]');
-                localStorage.setItem(
-                    'marketplaceTickets',
-                    JSON.stringify(marketplaceTickets.filter(t => t._id !== selectedTicket._id))
-                );
-
-                // Refresh after delay
-                setTimeout(() => {
-                    handleRefresh();
-                }, 2000);
-
-            } catch (cacheErr) {
-                console.warn("Non-critical: Could not clear caches", cacheErr);
-            }
+            // Remove purchased ticket dari local state
+            setTickets(prevTickets => prevTickets.filter(t => t._id !== selectedTicket._id));
 
             // Navigate to my tickets after delay
             setTimeout(() => {
@@ -689,60 +687,10 @@ const TicketMarketplace = () => {
 
         } catch (err) {
             console.error("Error during ticket purchase:", err);
+            setPurchaseMessage(`Error: ${err.message || "Gagal membeli tiket"}`);
 
-            // ✅ COMPLETE: Enhanced error handling dengan semua skenario
-            if (err.message.includes("Insufficient") || err.message.includes("Saldo tidak mencukupi")) {
-                setPurchaseMessage(`Error: Saldo tidak mencukupi. Dibutuhkan: ${selectedTicket.listingPrice} SOL. Saldo Anda: ${solanaBalance.toFixed(4)} SOL`);
-            } else if (err.message.includes("User rejected") || err.message.includes("ditolak")) {
-                setPurchaseMessage("Error: Transaksi ditolak di dompet Anda. Silakan coba lagi.");
-            } else if (err.message.includes("timeout") || err.message.includes("Timeout")) {
-                setPurchaseMessage("Error: Waktu transaksi habis. Jaringan Solana mungkin sibuk, silakan coba lagi nanti.");
-            } else if (err.message.includes("Network Error") || err.message.includes("network")) {
-                setPurchaseMessage("Error: Masalah koneksi jaringan. Periksa koneksi internet Anda dan coba lagi.");
-            } else if (err.message.includes("Authentication failed") || err.message.includes("autentikasi")) {
-                setPurchaseMessage("Error: Autentikasi gagal. Silakan disconnect dan connect ulang wallet Anda.");
-            } else if (err.message.includes("tidak lagi tersedia")) {
-                setPurchaseMessage("Error: Tiket ini sudah dibeli oleh orang lain. Silakan pilih tiket lain.");
-            } else if (err.message.includes("Invalid signature") || err.message.includes("signature")) {
-                setPurchaseMessage("Error: Signature transaksi tidak valid. Silakan coba lagi.");
-            } else if (err.message.includes("Rate limit") || err.message.includes("Too many requests")) {
-                setPurchaseMessage("Error: Terlalu banyak permintaan. Tunggu sebentar dan coba lagi.");
-            } else if (err.message.includes("Server error") || err.message.includes("500")) {
-                setPurchaseMessage("Error: Server sedang bermasalah. Silakan coba lagi dalam beberapa menit.");
-            } else if (err.message.includes("Not found") || err.message.includes("404")) {
-                setPurchaseMessage("Error: Tiket tidak ditemukan. Mungkin sudah terjual atau dihapus.");
-            } else if (err.message.includes("Forbidden") || err.message.includes("403")) {
-                setPurchaseMessage("Error: Akses ditolak. Periksa izin wallet Anda.");
-            } else if (err.message.includes("Bad request") || err.message.includes("400")) {
-                setPurchaseMessage("Error: Data permintaan tidak valid. Silakan refresh halaman dan coba lagi.");
-            } else if (err.message.includes("Contract error") || err.message.includes("blockchain")) {
-                setPurchaseMessage("Error: Masalah dengan smart contract. Silakan coba lagi nanti.");
-            } else if (err.message.includes("Gas") || err.message.includes("fee")) {
-                setPurchaseMessage("Error: Biaya transaksi terlalu tinggi. Coba lagi nanti saat jaringan tidak sibuk.");
-            } else {
-                // Generic error dengan details untuk debugging
-                setPurchaseMessage(`Error: ${err.message || "Gagal membeli tiket"}. Jika masalah berlanjut, silakan hubungi support.`);
-            }
-
-            // Log error untuk debugging
-            console.error("Purchase error details:", {
-                message: err.message,
-                stack: err.stack,
-                ticketId: selectedTicket._id,
-                userWallet: wallet.publicKey?.toString(),
-                timestamp: new Date().toISOString()
-            });
-
-            // Clear purchase state after showing error
             setTimeout(() => {
                 setProcessingPurchase(false);
-
-                // Reset purchase progress untuk error yang memerlukan retry
-                if (!err.message.includes("tidak lagi tersedia") &&
-                    !err.message.includes("ditolak") &&
-                    !err.message.includes("Insufficient")) {
-                    setPurchaseProgress(0);
-                }
             }, 5000);
         }
     };
@@ -771,11 +719,17 @@ const TicketMarketplace = () => {
             ? (tickets.reduce((sum, t) => sum + (parseFloat(t.listingPrice) || 0), 0) / tickets.length).toFixed(3)
             : 0;
 
+        const priceRange = tickets.length > 0 ? {
+            min: Math.min(...tickets.map(t => parseFloat(t.listingPrice) || 0)),
+            max: Math.max(...tickets.map(t => parseFloat(t.listingPrice) || 0))
+        } : { min: 0, max: 0 };
+
         return {
             totalTickets,
             ownedByUser,
             availableToBuy,
-            averagePrice
+            averagePrice,
+            priceRange
         };
     };
 
@@ -783,7 +737,7 @@ const TicketMarketplace = () => {
 
     // ✅ ENHANCED: Loading state
     if (loading) {
-        return <MarketplaceLoadingSpinner message="Memuat marketplace tiket..." />;
+        return <MarketplaceLoadingSpinner message="Memuat semua tiket marketplace..." />;
     }
 
     return (
@@ -871,21 +825,41 @@ const TicketMarketplace = () => {
             )}
 
             <div className="max-w-6xl mx-auto">
-                {/* ✅ ENHANCED: Header dengan statistics */}
+                {/* ✅ ENHANCED: Header dengan better statistics */}
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
                     <div>
-                        <h1 className="text-2xl font-bold text-white">🏪 Marketplace Tiket</h1>
-                        <p className="text-gray-400">
-                            Jelajahi dan beli tiket dari pengguna lain
+                        <h1 className="text-3xl font-bold text-white mb-2">🏪 Marketplace Tiket</h1>
+                        <p className="text-gray-400 mb-3">
+                            Jelajahi semua tiket yang dijual di marketplace
                         </p>
-                        <div className="flex items-center space-x-4 mt-2 text-sm">
-                            <span className="text-green-400">{marketStats.availableToBuy} tersedia untuk dibeli</span>
+                        <div className="flex flex-wrap items-center gap-4 text-sm">
+                            <div className="flex items-center gap-2">
+                                <div className="w-3 h-3 bg-green-400 rounded-full"></div>
+                                <span className="text-green-400">{marketStats.availableToBuy} dapat dibeli</span>
+                            </div>
                             {marketStats.ownedByUser > 0 && (
-                                <span className="text-blue-400">{marketStats.ownedByUser} tiket Anda</span>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 bg-blue-400 rounded-full"></div>
+                                    <span className="text-blue-400">{marketStats.ownedByUser} tiket Anda</span>
+                                </div>
                             )}
                             {marketStats.averagePrice > 0 && (
-                                <span className="text-gray-400">Rata-rata: {marketStats.averagePrice} SOL</span>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 bg-purple-400 rounded-full"></div>
+                                    <span className="text-gray-400">
+                                        Rata-rata: {marketStats.averagePrice} SOL
+                                        {marketStats.priceRange.min !== marketStats.priceRange.max && (
+                                            <span className="text-gray-500 ml-1">
+                                                ({marketStats.priceRange.min} - {marketStats.priceRange.max})
+                                            </span>
+                                        )}
+                                    </span>
+                                </div>
                             )}
+                            <div className="flex items-center gap-2">
+                                <div className="w-3 h-3 bg-indigo-400 rounded-full"></div>
+                                <span className="text-gray-400">{marketStats.totalTickets} total tiket</span>
+                            </div>
                         </div>
                     </div>
 
@@ -894,7 +868,7 @@ const TicketMarketplace = () => {
                         <button
                             onClick={handleRefresh}
                             disabled={loading}
-                            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+                            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
                         >
                             {loading ? (
                                 <>
@@ -914,8 +888,43 @@ const TicketMarketplace = () => {
                     </div>
                 </div>
 
-                {/* ✅ ENHANCED: Filter and Sort dengan show only available option */}
-                <div className="bg-gray-800 rounded-lg p-4 mb-6">
+                {/* ✅ ENHANCED: Filter and Sort dengan view mode */}
+                <div className="bg-gray-800 rounded-lg p-4 mb-6 border border-gray-700">
+                    {/* ✅ ENHANCED: View Mode Tabs */}
+                    <div className="mb-4">
+                        <div className="flex flex-wrap gap-2">
+                            <button
+                                onClick={() => setViewMode('all')}
+                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${viewMode === 'all'
+                                        ? 'bg-indigo-600 text-white'
+                                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                                    }`}
+                            >
+                                🌐 Semua Tiket ({marketStats.totalTickets})
+                            </button>
+                            <button
+                                onClick={() => setViewMode('available')}
+                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${viewMode === 'available'
+                                        ? 'bg-green-600 text-white'
+                                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                                    }`}
+                            >
+                                💰 Dapat Dibeli ({marketStats.availableToBuy})
+                            </button>
+                            {wallet.connected && marketStats.ownedByUser > 0 && (
+                                <button
+                                    onClick={() => setViewMode('mine')}
+                                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${viewMode === 'mine'
+                                            ? 'bg-blue-600 text-white'
+                                            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                                        }`}
+                                >
+                                    👤 Tiket Saya ({marketStats.ownedByUser})
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                         {/* Concert filter */}
                         <div>
@@ -955,7 +964,7 @@ const TicketMarketplace = () => {
                             </select>
                         </div>
 
-                        {/* Sort */}
+                        {/* Enhanced Sort */}
                         <div>
                             <label className="block text-gray-300 text-sm font-medium mb-2">
                                 Urutkan
@@ -965,45 +974,31 @@ const TicketMarketplace = () => {
                                 onChange={(e) => setSortBy(e.target.value)}
                                 className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2 text-white"
                             >
-                                <option value="price_asc">Harga: Terendah ke Tertinggi</option>
-                                <option value="price_desc">Harga: Tertinggi ke Terendah</option>
-                                <option value="date_asc">Tanggal: Terlama</option>
-                                <option value="date_desc">Tanggal: Terbaru</option>
+                                <option value="date_desc">Terbaru Daftar</option>
+                                <option value="date_asc">Terlama Daftar</option>
+                                <option value="price_asc">Harga: Terendah</option>
+                                <option value="price_desc">Harga: Tertinggi</option>
+                                <option value="concert_name">Nama Konser</option>
                             </select>
                         </div>
 
-                        {/* Show only available */}
+                        {/* Wallet Balance Display */}
                         <div>
                             <label className="block text-gray-300 text-sm font-medium mb-2">
-                                Tampilan
+                                {wallet.connected ? 'Saldo Anda' : 'Wallet Status'}
                             </label>
-                            <div className="flex items-center h-10">
-                                <label className="flex items-center cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={showOnlyAvailable}
-                                        onChange={(e) => setShowOnlyAvailable(e.target.checked)}
-                                        className="mr-2 h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                                    />
-                                    <span className="text-gray-300 text-sm">Hanya yang bisa dibeli</span>
-                                </label>
+                            <div className="bg-gray-700 border border-gray-600 rounded-lg p-2 text-white h-10 flex items-center">
+                                {wallet.connected ? (
+                                    <span className="text-green-400 font-medium">
+                                        {solanaBalance.toFixed(4)} SOL
+                                    </span>
+                                ) : (
+                                    <span className="text-gray-400 text-sm">
+                                        Tidak terhubung
+                                    </span>
+                                )}
                             </div>
                         </div>
-                    </div>
-
-                    {/* ✅ ENHANCED: Stats dengan wallet balance */}
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center pt-4 border-t border-gray-700">
-                        <div className="text-sm text-gray-400 mb-2 sm:mb-0">
-                            {tickets.length} tiket ditemukan
-                            {marketStats.ownedByUser > 0 && (
-                                <span className="text-blue-400 ml-2">({marketStats.ownedByUser} milik Anda)</span>
-                            )}
-                        </div>
-                        {wallet.connected && (
-                            <div className="text-sm text-gray-400">
-                                Saldo SOL Anda: <span className="text-white font-medium">{solanaBalance.toFixed(4)} SOL</span>
-                            </div>
-                        )}
                     </div>
 
                     {/* ✅ DEBUG INFO untuk development */}
@@ -1011,6 +1006,8 @@ const TicketMarketplace = () => {
                         <div className="mt-3 p-2 bg-blue-900/10 border border-blue-800 rounded text-xs">
                             <p className="text-blue-400">DEBUG: {debugInfo}</p>
                             <p className="text-gray-400">Last refresh: {new Date(lastRefresh).toLocaleTimeString()}</p>
+                            <p className="text-gray-400">View mode: {viewMode}</p>
+                            <p className="text-gray-400">Connected wallet: {wallet.publicKey?.toString() || 'None'}</p>
                         </div>
                     )}
                 </div>
@@ -1030,15 +1027,26 @@ const TicketMarketplace = () => {
                     </div>
                 )}
 
-                {/* ✅ ENHANCED: No tickets message */}
+                {/* ✅ ENHANCED: No tickets message dengan better UX */}
                 {tickets.length === 0 && !loading && !error && (
-                    <div className="bg-gray-800 rounded-lg p-8 text-center">
-                        <div className="text-6xl mb-4">🏪</div>
-                        <h2 className="text-xl text-white mb-4">Tidak Ada Tiket yang Dijual</h2>
+                    <div className="bg-gray-800 rounded-lg p-8 text-center border border-gray-700">
+                        <div className="text-6xl mb-4">
+                            {viewMode === 'mine' ? '👤' : viewMode === 'available' ? '💰' : '🏪'}
+                        </div>
+                        <h2 className="text-xl text-white mb-4">
+                            {viewMode === 'mine'
+                                ? 'Anda Belum Menjual Tiket'
+                                : viewMode === 'available'
+                                    ? 'Tidak Ada Tiket yang Dapat Dibeli'
+                                    : 'Tidak Ada Tiket di Marketplace'
+                            }
+                        </h2>
                         <p className="text-gray-400 mb-6">
-                            {showOnlyAvailable
-                                ? "Tidak ditemukan tiket yang bisa Anda beli saat ini."
-                                : "Tidak ditemukan tiket yang dijual di marketplace saat ini."
+                            {viewMode === 'mine'
+                                ? 'Anda belum memiliki tiket yang sedang dijual di marketplace.'
+                                : viewMode === 'available'
+                                    ? 'Tidak ada tiket yang tersedia untuk dibeli saat ini.'
+                                    : 'Belum ada tiket yang dijual di marketplace.'
                             }
                         </p>
                         <div className="flex flex-col sm:flex-row gap-3 justify-center">
@@ -1054,9 +1062,9 @@ const TicketMarketplace = () => {
                             >
                                 🎫 Beli Tiket Baru
                             </Link>
-                            {showOnlyAvailable && (
+                            {viewMode !== 'all' && (
                                 <button
-                                    onClick={() => setShowOnlyAvailable(false)}
+                                    onClick={() => setViewMode('all')}
                                     className="bg-purple-600 hover:bg-purple-700 text-white py-2 px-6 rounded-lg transition-colors"
                                 >
                                     👁️ Lihat Semua Tiket
@@ -1066,9 +1074,9 @@ const TicketMarketplace = () => {
                     </div>
                 )}
 
-                {/* ✅ ENHANCED: Tickets grid */}
+                {/* ✅ ENHANCED: Tickets grid dengan better responsive */}
                 {tickets.length > 0 && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                         {tickets.map(ticket => (
                             <MarketplaceTicketCard
                                 key={ticket._id}
@@ -1081,35 +1089,47 @@ const TicketMarketplace = () => {
                     </div>
                 )}
 
-                {/* ✅ ENHANCED: Navigation links */}
+                {/* ✅ ENHANCED: Navigation links dengan better organization */}
                 <div className="mt-8 flex flex-wrap justify-center gap-4">
                     <Link
                         to="/my-tickets"
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white py-3 px-6 rounded-lg transition-colors flex items-center gap-2"
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white py-3 px-6 rounded-lg transition-colors flex items-center gap-2 shadow-lg hover:shadow-xl"
                     >
                         🎫 Tiket Saya
                     </Link>
                     <Link
                         to="/mint-ticket"
-                        className="bg-green-600 hover:bg-green-700 text-white py-3 px-6 rounded-lg transition-colors flex items-center gap-2"
+                        className="bg-green-600 hover:bg-green-700 text-white py-3 px-6 rounded-lg transition-colors flex items-center gap-2 shadow-lg hover:shadow-xl"
                     >
                         🛒 Beli Tiket Baru
                     </Link>
                     <Link
                         to="/collections"
-                        className="bg-purple-600 hover:bg-purple-700 text-white py-3 px-6 rounded-lg transition-colors flex items-center gap-2"
+                        className="bg-purple-600 hover:bg-purple-700 text-white py-3 px-6 rounded-lg transition-colors flex items-center gap-2 shadow-lg hover:shadow-xl"
                     >
                         🎵 Lihat Konser
                     </Link>
                 </div>
 
-                {/* ✅ ENHANCED: Footer info */}
-                <div className="mt-8 text-center text-gray-500 text-sm">
-                    <p>🔐 Semua transaksi diamankan oleh blockchain Solana</p>
-                    <p className="mt-1">💰 Pembayaran langsung ke wallet penjual</p>
+                {/* ✅ ENHANCED: Footer info dengan better styling */}
+                <div className="mt-12 bg-gray-800/50 rounded-lg p-6 text-center border border-gray-700">
+                    <div className="flex flex-wrap justify-center gap-6 text-sm text-gray-400">
+                        <div className="flex items-center gap-2">
+                            <span className="text-lg">🔐</span>
+                            <span>Transaksi diamankan blockchain Solana</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-lg">💰</span>
+                            <span>Pembayaran langsung ke wallet penjual</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-lg">⚡</span>
+                            <span>Transaksi instan & mudah</span>
+                        </div>
+                    </div>
                     {process.env.NODE_ENV === 'development' && (
-                        <p className="mt-1 text-blue-400">
-                            🔧 Development Mode: Debug info aktif
+                        <p className="mt-4 text-blue-400 text-sm">
+                            🔧 Development Mode: Debug features aktif
                         </p>
                     )}
                 </div>
