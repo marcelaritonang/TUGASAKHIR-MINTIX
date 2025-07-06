@@ -24,10 +24,14 @@ app.use(express.json({ extended: false }));
 app.use(cors({
     origin: [
         process.env.FRONTEND_URL || "http://localhost:3000",
-        "http://localhost:3000",
-        "https://tugasakhir-mintix.vercel.app"  // 🆕 URL frontend Anda
-    ],
-    credentials: true
+        "http://localhost:3000",                              // Local
+        "https://tugasakhir-mintix.vercel.app",              // ✅ Exact Vercel URL
+        "https://*.vercel.app",                              // ✅ All Vercel subdomains
+        process.env.CORS_ORIGIN                              // From environment
+    ].filter(Boolean),
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token']
 }));
 app.use(session({
     secret: process.env.JWT_SECRET || 'your_jwt_secret_key',
