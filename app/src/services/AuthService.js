@@ -1,7 +1,11 @@
 // src/services/AuthService.js - Dengan perbaikan integrasi Solana
 class AuthService {
     constructor() {
-        this.baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+        this.baseUrl = process.env.REACT_APP_API_URL ||
+            (process.env.NODE_ENV === 'production'
+                ? 'https://tugasakhir-mintix-production.up.railway.app/api'
+                : 'http://localhost:5000/api');
+
         this.tokenKey = 'auth_token'; // Kunci konsisten untuk token
 
         // Tambahkan event untuk notifikasi perubahan status auth
