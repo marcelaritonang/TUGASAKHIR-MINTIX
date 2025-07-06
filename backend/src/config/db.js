@@ -3,26 +3,24 @@ require('dotenv').config();
 
 const connectDB = async () => {
     try {
-        // Simple connection string priority
-        const mongoURI = process.env.DATABASE_URL ||
-            process.env.MONGO_URI ||
-            'mongodb://localhost:27017/concert_nft_tickets';
+        // ✅ TAMBAHAN: Railway priority di awal
+        const mongoURI = process.env.DATABASE_URL ||           // 🆕 Railway
+            process.env.MONGO_URI ||              // Existing
+            'mongodb://concert-mongodb:27017/concert_nft_tickets' ||  // Existing Docker
+            'mongodb://localhost:27017/concert_nft_tickets';          // Existing Local
 
-        console.log(`Connecting to MongoDB...`);
+        console.log(`Mencoba koneksi ke MongoDB: ${mongoURI}`);
 
-        // SIMPLE connection options only
         const conn = await mongoose.connect(mongoURI, {
             useNewUrlParser: true,
             useUnifiedTopology: true
         });
 
-        console.log(`MongoDB Connected: ${conn.connection.host}`);
+        console.log(`MongoDB Terhubung: ${conn.connection.host}`);
         return conn;
-
     } catch (error) {
-        console.error(`MongoDB Error: ${error.message}`);
-
-        // Simple error handling - no retry loops
+        console.error(`Error koneksi MongoDB: ${error.message}`);
+        // Jangan hentikan proses saat development
         if (process.env.NODE_ENV === 'production') {
             process.exit(1);
         }
