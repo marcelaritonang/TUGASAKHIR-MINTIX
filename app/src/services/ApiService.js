@@ -2,8 +2,16 @@
 class ApiService {
     constructor() {
         // FIX: HARDCODE base URL untuk prevent connection issues
-        this.baseUrl = 'http://localhost:5000/api';
+        this.baseUrl = process.env.REACT_APP_API_URL ||
+            (process.env.NODE_ENV === 'production'
+                ? 'https://tugasakhir-mintix-production.up.railway.app/api'
+                : 'http://localhost:5000/api');
 
+
+        // Debug logging
+        console.log('🔗 ApiService baseUrl:', this.baseUrl);
+        console.log('🌍 Environment:', process.env.NODE_ENV);
+        console.log('🔧 REACT_APP_API_URL:', process.env.REACT_APP_API_URL);
         // Cache for storing data
         this.cache = {
             concerts: {
