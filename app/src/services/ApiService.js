@@ -1,21 +1,21 @@
-// src/services/ApiService.js - SAFE FOR LOCALHOST (Fixed CORS issue)
+// src/services/ApiService.js - DEBUG VERSION FOR PRODUCTION
 class ApiService {
     constructor() {
-        // ✅ KEEP: Your existing URL logic (it works!)
         this.baseUrl = this.determineBaseUrl();
 
-        // ✅ KEEP: Your existing debug logging
-        console.log('🔗 ApiService Configuration:');
+        // ✅ ENHANCED: More detailed logging
+        console.log('🔗 ApiService Configuration (DEBUG):');
         console.log('   Environment:', process.env.NODE_ENV);
         console.log('   REACT_APP_API_URL:', process.env.REACT_APP_API_URL);
         console.log('   Final baseUrl:', this.baseUrl);
-        console.log('   Current hostname:', typeof window !== 'undefined' ? window.location.hostname : 'N/A');
+        console.log('   Current hostname:', window.location.hostname);
+        console.log('   Current origin:', window.location.origin);
+        console.log('   User agent:', navigator.userAgent);
 
-        // ✅ KEEP: Your existing cache configuration
         this.cache = {
             concerts: { data: null, timestamp: 0 },
             pendingConcerts: { data: null, timestamp: 0 },
-            concertDetails: {}, // Safe addition
+            concertDetails: {},
             mintedSeats: {},
             lastFetch: {},
             transactions: {}
@@ -26,45 +26,53 @@ class ApiService {
         this.seatCacheDuration = 30000;
         this.transactionCacheDuration = 60000;
 
-        // ✅ NEW: Connection status (won't break anything)
         this.connectionStatus = {
             isConnected: true,
             lastError: null,
-            retryCount: 0
+            retryCount: 0,
+            lastSuccessfulRequest: null
         };
+
+        // ✅ NEW: Test connection on startup
+        this.testConnectionOnStartup();
     }
 
-    // ✅ KEEP: Your exact determineBaseUrl
+    // ✅ ENHANCED: Better URL determination with more logging
     determineBaseUrl() {
-        // Priority 1: Environment variable (highest priority)
-        if (process.env.REACT_APP_API_URL) {
-            const url = process.env.REACT_APP_API_URL;
-            console.log('🎯 Using REACT_APP_API_URL:', url);
-            return url;
+        console.log('🔍 Determining base URL...');
+
+        // Check environment variables first
+        const envApiUrl = process.env.REACT_APP_API_URL;
+        console.log('   REACT_APP_API_URL from env:', envApiUrl);
+
+        if (envApiUrl) {
+            console.log('✅ Using environment variable URL:', envApiUrl);
+            return envApiUrl;
         }
 
-        // Priority 2: Auto-detect based on current domain
+        // Auto-detect based on hostname
         if (typeof window !== 'undefined') {
             const hostname = window.location.hostname;
+            console.log('   Detecting from hostname:', hostname);
 
-            // If on Vercel production
+            // Vercel production
             if (hostname.includes('vercel.app') ||
                 hostname.includes('tugasakhir-mintix') ||
                 hostname.includes('mintix')) {
                 const railwayUrl = 'https://tugasakhir-mintix-production.up.railway.app/api';
-                console.log('🚀 Detected Vercel deployment, using Railway:', railwayUrl);
+                console.log('🚀 Detected Vercel, using Railway:', railwayUrl);
                 return railwayUrl;
             }
 
-            // If on localhost (development)
+            // Localhost
             if (hostname === 'localhost' || hostname === '127.0.0.1') {
                 const localUrl = 'http://localhost:5000/api';
-                console.log('🏠 Detected localhost, using local backend:', localUrl);
+                console.log('🏠 Detected localhost:', localUrl);
                 return localUrl;
             }
         }
 
-        // Priority 3: Environment-based fallback
+        // Fallback
         const fallbackUrl = process.env.NODE_ENV === 'production'
             ? 'https://tugasakhir-mintix-production.up.railway.app/api'
             : 'http://localhost:5000/api';
@@ -73,79 +81,295 @@ class ApiService {
         return fallbackUrl;
     }
 
-    // ✅ FIXED: CORS-safe headers for localhost
+    // ✅ ENHANCED: Debug headers
     _getHeaders() {
         const token = localStorage.getItem('auth_token');
+
         const headers = {
             'Content-Type': 'application/json'
-            // ✅ REMOVED: Accept and Cache-Control headers (causes CORS preflight)
         };
 
         if (token) {
             headers['x-auth-token'] = token;
+            console.log('🔑 Adding auth token to headers (length:', token.length, ')');
+        } else {
+            console.log('❌ No auth token found in localStorage');
         }
 
-        // ✅ ONLY add Railway headers in production
+        // ✅ PRODUCTION: Add CORS-friendly headers
         if (process.env.NODE_ENV === 'production') {
             headers['Accept'] = 'application/json';
-            headers['Cache-Control'] = 'no-cache';
+            // Remove Cache-Control to avoid CORS issues
         }
 
+        console.log('📋 Request headers:', Object.keys(headers));
         return headers;
     }
 
-    // ✅ KEEP: Your existing multipart headers
     _getMultipartHeaders() {
         const token = localStorage.getItem('auth_token');
         return token ? { 'x-auth-token': token } : {};
     }
 
-    // ✅ KEEP: Your existing response handling (minimal enhancement)
+    // ✅ ENHANCED: Better error handling with detailed logging
     async _handleResponse(response, errorMessage = 'API request failed') {
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            const error = new Error(errorData.msg || `${errorMessage}: ${response.status}`);
-            error.status = response.status;
+        console.log(`📥 Response received:`);
+        console.log('   Status:', response.status, response.statusText);
+        console.log('   URL:', response.url);
+        console.log('   Headers:', Object.fromEntries(response.headers.entries()));
 
-            // ✅ SAFE: Update connection status without breaking anything
-            if (response.status === 503 || response.status === 502) {
+        if (!response.ok) {
+            let errorData = {};
+            let errorText = '';
+
+            try {
+                const contentType = response.headers.get('content-type');
+                console.log('   Content-Type:', contentType);
+
+                if (contentType && contentType.includes('application/json')) {
+                    errorData = await response.json();
+                    console.log('   Error data:', errorData);
+                } else {
+                    errorText = await response.text();
+                    console.log('   Error text:', errorText.substring(0, 500));
+                }
+            } catch (parseError) {
+                console.error('❌ Could not parse error response:', parseError);
+            }
+
+            const error = new Error(
+                errorData.msg ||
+                errorData.message ||
+                errorText ||
+                `${errorMessage}: ${response.status}`
+            );
+            error.status = response.status;
+            error.response = errorData;
+
+            // ✅ ENHANCED: Specific error handling
+            if (response.status === 503) {
+                error.message = 'Railway backend is temporarily unavailable (503). Please try again.';
                 this.connectionStatus.isConnected = false;
-                this.connectionStatus.lastError = error.message;
+            } else if (response.status === 502) {
+                error.message = 'Railway gateway error (502). Backend may be starting up.';
+                this.connectionStatus.isConnected = false;
             } else if (response.status === 401) {
+                error.message = 'Authentication failed (401). Please login again.';
                 localStorage.removeItem('auth_token');
+                console.log('🗑️ Removed invalid auth token');
+            } else if (response.status === 404) {
+                error.message = `Endpoint not found (404): ${response.url}`;
+            } else if (response.status === 0) {
+                error.message = 'Network error - unable to reach server';
+                this.connectionStatus.isConnected = false;
+            }
+
+            this.connectionStatus.lastError = error.message;
+            console.error('❌ Request failed:', error.message);
+            throw error;
+        }
+
+        // ✅ Success handling
+        this.connectionStatus.isConnected = true;
+        this.connectionStatus.lastError = null;
+        this.connectionStatus.lastSuccessfulRequest = new Date().toISOString();
+
+        try {
+            const data = await response.json();
+            console.log('✅ Response parsed successfully');
+            return data;
+        } catch (parseError) {
+            console.error('❌ Could not parse response JSON:', parseError);
+            throw new Error('Invalid JSON response from server');
+        }
+    }
+
+    // ✅ NEW: Test connection on startup
+    async testConnectionOnStartup() {
+        console.log('🧪 Testing connection on startup...');
+
+        try {
+            // Simple health check without auth
+            const response = await fetch(`${this.baseUrl}/health`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (response.ok) {
+                console.log('✅ Startup connection test successful');
+                this.connectionStatus.isConnected = true;
+            } else {
+                console.log('❌ Startup connection test failed:', response.status);
+                this.connectionStatus.isConnected = false;
+            }
+        } catch (error) {
+            console.error('❌ Startup connection test error:', error.message);
+            this.connectionStatus.isConnected = false;
+            this.connectionStatus.lastError = error.message;
+        }
+    }
+
+    // ✅ ENHANCED: Better request method with detailed logging
+    async _makeRequest(endpoint, options = {}) {
+        const url = `${this.baseUrl}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
+
+        console.log(`📡 Making request:`);
+        console.log('   URL:', url);
+        console.log('   Method:', options.method || 'GET');
+        console.log('   Has body:', !!options.body);
+        console.log('   Timestamp:', new Date().toISOString());
+
+        const requestOptions = {
+            method: 'GET',
+            headers: this._getHeaders(),
+            ...options
+        };
+
+        console.log('   Final headers:', requestOptions.headers);
+
+        try {
+            const response = await fetch(url, requestOptions);
+            return await this._handleResponse(response);
+        } catch (error) {
+            console.error('❌ Fetch error:', error);
+
+            if (error.name === 'TypeError' && error.message.includes('Failed to fetch')) {
+                this.connectionStatus.isConnected = false;
+                this.connectionStatus.lastError = 'Network connection failed';
+                throw new Error('Unable to connect to server. Please check your internet connection.');
             }
 
             throw error;
         }
-
-        // ✅ SAFE: Mark as connected on success
-        this.connectionStatus.isConnected = true;
-        this.connectionStatus.lastError = null;
-
-        return response.json();
     }
 
-    // ✅ KEEP: All your existing cache methods exactly the same
+    // ✅ ENHANCED: Connection test with detailed diagnostics
+    async testConnection() {
+        console.log('🧪 Running detailed connection test...');
+
+        const tests = [];
+
+        // Test 1: Basic fetch to health endpoint
+        try {
+            console.log('Test 1: Basic health check...');
+            const response = await fetch(`${this.baseUrl}/health`);
+            tests.push({
+                test: 'Health Check',
+                success: response.ok,
+                status: response.status,
+                url: response.url
+            });
+        } catch (error) {
+            tests.push({
+                test: 'Health Check',
+                success: false,
+                error: error.message
+            });
+        }
+
+        // Test 2: CORS preflight test
+        try {
+            console.log('Test 2: CORS test...');
+            const response = await fetch(`${this.baseUrl}/auth/nonce`, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            tests.push({
+                test: 'CORS Test',
+                success: response.ok,
+                status: response.status
+            });
+        } catch (error) {
+            tests.push({
+                test: 'CORS Test',
+                success: false,
+                error: error.message
+            });
+        }
+
+        // Test 3: Auth endpoint test
+        const token = localStorage.getItem('auth_token');
+        if (token) {
+            try {
+                console.log('Test 3: Auth validation...');
+                const response = await fetch(`${this.baseUrl}/auth/validate`, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-auth-token': token
+                    }
+                });
+                tests.push({
+                    test: 'Auth Validation',
+                    success: response.ok,
+                    status: response.status
+                });
+            } catch (error) {
+                tests.push({
+                    test: 'Auth Validation',
+                    success: false,
+                    error: error.message
+                });
+            }
+        }
+
+        console.log('🔍 Connection test results:', tests);
+        return {
+            success: tests.some(t => t.success),
+            tests,
+            baseUrl: this.baseUrl,
+            timestamp: new Date().toISOString()
+        };
+    }
+
+    // ✅ ENHANCED: Debug info
+    async debugInfo() {
+        const info = {
+            environment: {
+                NODE_ENV: process.env.NODE_ENV,
+                REACT_APP_API_URL: process.env.REACT_APP_API_URL,
+                hostname: window.location.hostname,
+                origin: window.location.origin,
+                userAgent: navigator.userAgent.substring(0, 100)
+            },
+            apiService: {
+                baseUrl: this.baseUrl,
+                hasToken: !!localStorage.getItem('auth_token'),
+                tokenLength: localStorage.getItem('auth_token')?.length || 0,
+                connectionStatus: this.connectionStatus
+            },
+            localStorage: {
+                authToken: localStorage.getItem('auth_token') ? 'EXISTS' : 'NULL',
+                walletAddress: localStorage.getItem('wallet_address') || 'NULL'
+            },
+            cache: {
+                concerts: !!this.cache.concerts.data,
+                concertCount: this.cache.concerts.data?.length || 0,
+                concertDetails: Object.keys(this.cache.concertDetails).length
+            },
+            timestamp: new Date().toISOString()
+        };
+
+        console.log('🔍 Debug Info:', info);
+        return info;
+    }
+
+    // Keep all your existing cache methods
     clearCache() {
         this.cache = {
-            concerts: {
-                data: null,
-                timestamp: 0
-            },
-            pendingConcerts: {
-                data: null,
-                timestamp: 0
-            },
+            concerts: { data: null, timestamp: 0 },
+            pendingConcerts: { data: null, timestamp: 0 },
             concertDetails: {},
             mintedSeats: {},
             lastFetch: {},
             transactions: {}
         };
-        console.log("API cache cleared");
+        console.log("🗑️ API cache cleared");
     }
 
     clearConcertCache() {
-        console.log("Clearing concert cache");
+        console.log("🗑️ Clearing concert cache");
         if (this.cache && this.cache.concerts) {
             this.cache.concerts.data = null;
             this.cache.concerts.timestamp = 0;
@@ -156,63 +380,15 @@ class ApiService {
     }
 
     clearPendingConcertsCache() {
-        console.log("Clearing pending concerts cache");
+        console.log("🗑️ Clearing pending concerts cache");
         this.cache.pendingConcerts.data = null;
         this.cache.pendingConcerts.timestamp = 0;
         localStorage.removeItem('pendingConcerts');
     }
 
-    // ✅ NEW: Safe utility methods (won't interfere with existing code)
-    async testConnection() {
-        try {
-            console.log('🧪 Testing connection...');
-
-            // ✅ SAFE: Simple request without complex headers
-            const response = await fetch(`${this.baseUrl}/health`);
-
-            if (response.ok) {
-                console.log('✅ Connection successful');
-                this.connectionStatus.isConnected = true;
-                return { success: true };
-            } else {
-                console.log('❌ Connection failed:', response.status);
-                this.connectionStatus.isConnected = false;
-                return { success: false, status: response.status };
-            }
-        } catch (error) {
-            console.error('❌ Connection error:', error);
-            this.connectionStatus.isConnected = false;
-            return { success: false, error: error.message };
-        }
-    }
-
-    // ✅ NEW: Safe status getter
     getConnectionStatus() {
-        return {
-            ...this.connectionStatus,
-            baseUrl: this.baseUrl,
-            environment: process.env.NODE_ENV
-        };
+        return this.connectionStatus;
     }
-
-    // ✅ NEW: Safe debug info
-    async debugInfo() {
-        return {
-            baseUrl: this.baseUrl,
-            environment: process.env.NODE_ENV,
-            reactAppApiUrl: process.env.REACT_APP_API_URL,
-            hostname: typeof window !== 'undefined' ? window.location.hostname : 'N/A',
-            hasToken: !!localStorage.getItem('auth_token'),
-            connectionStatus: this.connectionStatus,
-            cacheStatus: {
-                concerts: !!this.cache.concerts.data,
-                concertCount: this.cache.concerts.data?.length || 0,
-                concertDetails: Object.keys(this.cache.concertDetails).length
-            },
-            timestamp: new Date().toISOString()
-        };
-    }
-
 
     async getConcerts(forceRefresh = false) {
         try {
