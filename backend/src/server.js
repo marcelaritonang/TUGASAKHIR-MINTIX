@@ -1,4 +1,4 @@
-// backend/src/server.js - BASED ON YOUR WORKING PATTERN
+// backend/src/server.js - FIXED SERVICE INITIALIZATION ORDER
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -6,59 +6,11 @@ const session = require('express-session');
 const http = require('http');
 require('dotenv').config();
 
-// ✅ CRITICAL: Enhanced error handling to prevent crashes
-process.on('uncaughtException', (error) => {
-    console.error('🚨 Uncaught Exception:', error.message);
-    console.log('⚠️ Server continuing despite error...');
-    // Don't exit - just log
-});
+// Import services
+const webSocketService = require('./services/websocketService');
+const seatLockingService = require('./services/seatLockingService');
 
-process.on('unhandledRejection', (reason) => {
-    console.error('🚨 Unhandled Rejection:', reason);
-    console.log('⚠️ Server continuing despite rejection...');
-    // Don't exit - just log
-});
-
-// ✅ SAFE: Create mock services to avoid path-to-regexp errors
-console.log('🔧 Creating safe mock services...');
-
-const webSocketService = {
-    initialize: (server) => {
-        console.log('🔗 Mock WebSocket service initialized');
-        return {
-            emit: () => { },
-            to: () => ({ emit: () => { } }),
-            on: () => { },
-            sockets: { emit: () => { } }
-        };
-    },
-    getStats: () => ({
-        connectedUsers: 0,
-        concertRooms: 0,
-        totalRoomUsers: 0
-    }),
-    shutdown: () => {
-        console.log('🔗 Mock WebSocket shutdown');
-    }
-};
-
-const seatLockingService = {
-    getSystemStats: () => ({
-        activeTempLocks: 0,
-        activeProcessingLocks: 0,
-        totalActiveLocks: 0,
-        activeUsers: 0
-    }),
-    getLocksForConcert: () => [],
-    cleanupExpiredLocks: () => 0,
-    shutdown: () => {
-        console.log('🔒 Mock SeatLocking shutdown');
-    }
-};
-
-console.log('✅ Mock services created');
-
-// Init app - EXACTLY like your working pattern
+// Init app
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
@@ -67,24 +19,20 @@ const PORT = process.env.PORT || 5000;
 const connectDB = require('./config/db');
 connectDB();
 
-// Essential middleware - EXACTLY like your working pattern
+// Essential middleware
 app.use(express.json({ extended: false }));
-
-// ✅ ENHANCED: Better CORS configuration
 app.use(cors({
     origin: [
         process.env.FRONTEND_URL || "http://localhost:3000",
-        "http://localhost:3000",
-        "https://tugasakhir-mintix-bjin.vercel.app",          // ✅ Your exact URL
-        "https://tugasakhir-mintix.vercel.app",
-        "https://*.vercel.app",
-        process.env.CORS_ORIGIN
+        "http://localhost:3000",                              // Local
+        "https://tugasakhir-mintix.vercel.app",              // ✅ Exact Vercel URL
+        "https://*.vercel.app",                              // ✅ All Vercel subdomains
+        process.env.CORS_ORIGIN                              // From environment
     ].filter(Boolean),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-auth-token']
 }));
-
 app.use(session({
     secret: process.env.JWT_SECRET || 'your_jwt_secret_key',
     resave: false,
@@ -99,37 +47,26 @@ app.use(session({
 app.use('/public', express.static(path.join(__dirname, '../public')));
 app.use('/uploads', express.static(path.join(__dirname, '../public/uploads')));
 
-// ✅ CRITICAL: Make mock services globally available BEFORE any route loading
+// ✅ CRITICAL: Make services globally available BEFORE WebSocket initialization
 global.seatLockingService = seatLockingService;
 global.webSocketService = webSocketService;
 
-// ✅ SAFE: Initialize mock WebSocket
-console.log('🔗 Initializing mock WebSocket service...');
+// ✅ CRITICAL: Initialize WebSocket service AFTER global assignment
+console.log('🔗 Initializing WebSocket service...');
 const io = webSocketService.initialize(server);
-console.log('✅ Mock WebSocket service initialized');
+console.log('✅ WebSocket service initialized');
 
 // Make io globally available
 global.io = io;
 
-// ✅ MISSING: Add the /api/health endpoint that Railway needs
-app.get('/api/health', (req, res) => {
-    res.json({
-        status: 'healthy',
-        api: 'active',
-        cors: 'enabled',
-        timestamp: new Date().toISOString(),
-        version: 'fixed-1.0.0'
-    });
-});
-
-// Load routes - EXACTLY like your working pattern
+// Load routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/concerts', require('./routes/concerts'));
 app.use('/api/tickets', require('./routes/tickets'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/blockchain', require('./routes/blockchain'));
 
-// ✅ ESSENTIAL: System status endpoints for monitoring
+// ✅ ESSENTIAL: System status untuk monitoring hybrid locking
 app.get('/api/system/status', (req, res) => {
     try {
         const wsStats = webSocketService.getStats();
@@ -148,7 +85,6 @@ app.get('/api/system/status', (req, res) => {
                 totalActiveLocks: lockStats.totalActiveLocks,
                 activeUsers: lockStats.activeUsers
             },
-            mode: 'mock-services',
             timestamp: new Date().toISOString()
         });
     } catch (error) {
@@ -160,6 +96,7 @@ app.get('/api/system/status', (req, res) => {
     }
 });
 
+// ✅ ESSENTIAL: Get locks untuk specific concert
 app.get('/api/system/locks/:concertId', (req, res) => {
     try {
         const { concertId } = req.params;
@@ -169,7 +106,6 @@ app.get('/api/system/locks/:concertId', (req, res) => {
             success: true,
             concertId,
             locks,
-            mode: 'mock-service',
             timestamp: new Date().toISOString()
         });
     } catch (error) {
@@ -181,15 +117,15 @@ app.get('/api/system/locks/:concertId', (req, res) => {
     }
 });
 
+// ✅ ESSENTIAL: Manual cleanup untuk expired locks
 app.post('/api/system/cleanup', (req, res) => {
     try {
         const cleanedCount = seatLockingService.cleanupExpiredLocks();
 
         res.json({
             success: true,
-            message: `Mock cleanup completed: ${cleanedCount} locks`,
+            message: `Cleaned up ${cleanedCount} expired locks`,
             cleanedCount,
-            mode: 'mock-service',
             timestamp: new Date().toISOString()
         });
     } catch (error) {
@@ -201,21 +137,20 @@ app.post('/api/system/cleanup', (req, res) => {
     }
 });
 
-// Root route - similar to your working pattern
+// Root route dengan hybrid locking info
 app.get('/', (req, res) => {
     try {
         const wsStats = webSocketService.getStats();
         const lockStats = seatLockingService.getSystemStats();
 
         res.json({
-            msg: 'Concert NFT Tickets API - Fixed Version',
-            version: 'fixed-1.0.0',
-            mode: 'mock-services',
+            msg: 'Concert NFT Tickets API with Hybrid Seat Locking',
+            version: '3.0.0-hybrid',
             features: [
-                'mock-services-only',
-                'no-path-to-regexp-errors',
-                'crash-resistant',
-                'railway-compatible'
+                'hybrid-seat-locking',
+                'real-time-websocket',
+                'conflict-prevention',
+                'automatic-cleanup'
             ],
             status: {
                 websocket: {
@@ -227,36 +162,32 @@ app.get('/', (req, res) => {
                     tempLocks: lockStats.activeTempLocks,
                     processingLocks: lockStats.activeProcessingLocks
                 }
-            },
-            timestamp: new Date().toISOString()
+            }
         });
     } catch (error) {
         console.error('Error in root route:', error);
         res.json({
-            msg: 'Concert NFT Tickets API - Fixed Version',
-            version: 'fixed-1.0.0',
-            mode: 'mock-services',
-            status: 'error getting detailed status',
-            timestamp: new Date().toISOString()
+            msg: 'Concert NFT Tickets API',
+            version: '3.0.0-hybrid',
+            status: 'error getting detailed status'
         });
     }
 });
 
-// Health check - EXACTLY like your working pattern
+// Health check
 app.get('/health', (req, res) => {
     res.json({
         status: 'healthy',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
-        mode: 'mock-services',
         services: {
-            websocket: 'mock',
-            seatLocking: 'mock'
+            websocket: webSocketService ? 'active' : 'inactive',
+            seatLocking: seatLockingService ? 'active' : 'inactive'
         }
     });
 });
 
-// Error handling - EXACTLY like your working pattern
+// Error handling
 app.use((err, req, res, next) => {
     console.error('Global error handler:', err);
     res.status(500).json({
@@ -265,18 +196,19 @@ app.use((err, req, res, next) => {
     });
 });
 
-// ✅ ESSENTIAL: Graceful shutdown for cleanup services
+// ✅ ESSENTIAL: Graceful shutdown untuk cleanup services
 const gracefulShutdown = () => {
     console.log('\n🛑 Shutting down server gracefully...');
 
-    // Cleanup mock services
+    // Cleanup seat locking service
     if (seatLockingService && typeof seatLockingService.shutdown === 'function') {
-        console.log('🔒 Shutting down mock seat locking service...');
+        console.log('🔒 Shutting down seat locking service...');
         seatLockingService.shutdown();
     }
 
+    // Cleanup websocket service
     if (webSocketService && typeof webSocketService.shutdown === 'function') {
-        console.log('🔗 Shutting down mock websocket service...');
+        console.log('🔗 Shutting down websocket service...');
         webSocketService.shutdown();
     }
 
@@ -296,16 +228,14 @@ const gracefulShutdown = () => {
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
 
-// Start server - EXACTLY like your working pattern
+// Start server
 server.listen(PORT, '0.0.0.0', () => {
-    console.log('\n🚀 ===== FIXED SERVER WITH MOCK SERVICES =====');
+    console.log('\n🚀 ===== HYBRID SEAT LOCKING SERVER =====');
     console.log(`📡 Server running on port ${PORT}`);
-    console.log(`🔗 WebSocket service: MOCK (safe)`);
-    console.log(`🔒 Seat locking service: MOCK (safe)`);
+    console.log(`🔗 WebSocket service: ${webSocketService ? 'ACTIVE' : 'INACTIVE'}`);
+    console.log(`🔒 Seat locking service: ${seatLockingService ? 'ACTIVE' : 'INACTIVE'}`);
     console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🎯 Platform: ${process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Local'}`);
-    console.log(`🛡️ Error handling: ENHANCED`);
     console.log('🎯 =======================================\n');
 });
-
-module.exports = { app, server, io };// Force redeploy Tue Jul  8 00:59:17 WIB 2025
+module.exports = { app, server, io };
