@@ -1,55 +1,12 @@
 {
     "version": 2,
-    "name": "concert-nft-tickets-frontend",
-    "builds": [
-        {
-            "src": "package.json",
-            "use": "@vercel/static-build",
-            "config": {
-                "distDir": "build"
-            }
-        }
-    ],
     "routes": [
-        {
-            "src": "/static/(.*)",
-            "headers": {
-                "cache-control": "public, max-age=31536000, immutable"
-            }
-        },
         {
             "src": "/(.*)",
             "dest": "/index.html"
         }
     ],
-    "headers": [
-        {
-            "source": "/api/(.*)",
-            "headers": [
-                {
-                    "key": "Access-Control-Allow-Origin",
-                    "value": "https://tugasakhir-mintix-production.up.railway.app"
-                },
-                {
-                    "key": "Access-Control-Allow-Methods",
-                    "value": "GET, POST, PUT, DELETE, OPTIONS"
-                },
-                {
-                    "key": "Access-Control-Allow-Headers",
-                    "value": "Content-Type, Authorization, x-auth-token"
-                }
-            ]
-        }
-    ],
     "env": {
-        "REACT_APP_API_URL": "https://tugasakhir-mintix-production.up.railway.app/api",
-        "REACT_APP_WS_URL": "wss://tugasakhir-mintix-production.up.railway.app",
-        "REACT_APP_SOLANA_NETWORK": "testnet",
-        "REACT_APP_SOLANA_RPC_URL": "https://api.testnet.solana.com",
-        "REACT_APP_PROGRAM_ID": "3oKZi6zmYzbRDuq8nAAGeL9m9TcwFPAiR2cfz4vjANum"
-    },
-    "regions": [
-        "sin1"
-    ],
-    "framework": "create-react-app"
+        "REACT_APP_API_URL": "https://tugasakhir-mintix-production.up.railway.app/api"
+    }
 }
