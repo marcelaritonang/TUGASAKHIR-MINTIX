@@ -48,11 +48,6 @@
         "REACT_APP_SOLANA_RPC_URL": "https://api.testnet.solana.com",
         "REACT_APP_PROGRAM_ID": "3oKZi6zmYzbRDuq8nAAGeL9m9TcwFPAiR2cfz4vjANum"
     },
-    "functions": {
-        "app/build/static/js/*.js": {
-            "maxDuration": 30
-        }
-    },
     "regions": [
         "sin1"
     ],
