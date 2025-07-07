@@ -876,7 +876,7 @@ class ApiService {
  */
     async mintTicket(mintData) {
         try {
-            console.log("===== ENHANCED MINT TICKET API CALL =====");
+            console.log("===== ENHANCED MINT TICKET WITH IMMEDIATE SEAT REFRESH =====");
             console.log("Minting ticket with data:", JSON.stringify(mintData, null, 2));
 
             // Get auth token
@@ -890,27 +890,10 @@ class ApiService {
             }
 
             // Basic data validation
-            if (!mintData.concertId) {
-                console.error("Missing concertId in mintData");
+            if (!mintData.concertId || !mintData.sectionName || !mintData.seatNumber) {
                 return {
                     success: false,
-                    msg: 'Concert ID is required'
-                };
-            }
-
-            if (!mintData.sectionName) {
-                console.error("Missing sectionName in mintData");
-                return {
-                    success: false,
-                    msg: 'Section name is required'
-                };
-            }
-
-            if (!mintData.seatNumber) {
-                console.error("Missing seatNumber in mintData");
-                return {
-                    success: false,
-                    msg: 'Seat number is required'
+                    msg: 'Concert ID, section name, and seat number are required'
                 };
             }
 
@@ -926,8 +909,6 @@ class ApiService {
             };
 
             console.log("Sending mint request to API with payload:", JSON.stringify(payload, null, 2));
-            console.log("Using auth token:", token.substring(0, 15) + "...");
-            console.log("Endpoint:", `${this.baseUrl}/tickets/mint`);
 
             // Setup request with timeout
             const controller = new AbortController();
@@ -945,48 +926,21 @@ class ApiService {
                     signal: controller.signal
                 });
 
-                // Clear timeout
                 clearTimeout(timeoutId);
 
-                // Log response details for debugging
-                console.log(`Mint ticket API response status: ${response.status}`);
-                console.log(`Response headers:`, response.headers);
-
-                // Handle non-200 responses
                 if (!response.ok) {
                     let errorMessage = `Failed to mint ticket (Status: ${response.status})`;
-                    let errorDetails = null;
-
                     try {
-                        // Try to get detailed error message from response
                         const errorData = await response.json();
-                        console.error("API Error response:", errorData);
-
-                        if (errorData) {
-                            errorMessage = errorData.msg || errorData.message || errorMessage;
-                            errorDetails = errorData;
-                        }
+                        errorMessage = errorData.msg || errorData.message || errorMessage;
                     } catch (parseErr) {
-                        console.error("Could not parse error response as JSON:", parseErr);
-
-                        // Try to get text response as fallback
-                        try {
-                            const errorText = await response.text();
-                            console.error("Raw error response:", errorText);
-                            if (errorText) {
-                                errorMessage = `${errorMessage} - ${errorText}`;
-                            }
-                        } catch (textErr) {
-                            console.error("Could not get text from error response:", textErr);
-                        }
+                        console.error("Could not parse error response:", parseErr);
                     }
 
-                    // Return structured error response
                     return {
                         success: false,
                         msg: errorMessage,
-                        status: response.status,
-                        error: errorDetails
+                        status: response.status
                     };
                 }
 
@@ -999,91 +953,78 @@ class ApiService {
                     console.error("Error parsing successful response:", parseErr);
                     return {
                         success: false,
-                        msg: 'Server returned invalid response format',
-                        error: parseErr.message
+                        msg: 'Server returned invalid response format'
                     };
                 }
 
-                // CRITICAL: Validate response structure
-                if (!result) {
-                    console.error("Empty response from server");
-                    return {
+                // ✅ CRITICAL ADDITION: IMMEDIATE SEAT REFRESH AFTER SUCCESSFUL MINT
+                console.log("🚀 IMMEDIATE: Refreshing minted seats after successful mint...");
+
+                try {
+                    // 1. Force refresh minted seats immediately
+                    const refreshResult = await this.getMintedSeatsForceRefresh(mintData.concertId);
+                    console.log("✅ Immediate seat refresh completed:", refreshResult);
+
+                    // 2. Clear seat cache for this concert
+                    await this.clearMintedSeatsCache(mintData.concertId);
+
+                    // 3. Dispatch custom event for real-time UI update
+                    if (typeof window !== 'undefined' && window.dispatchEvent) {
+                        const event = new CustomEvent('seatMintedRealtime', {
+                            detail: {
+                                concertId: mintData.concertId,
+                                sectionName: mintData.sectionName,
+                                seatNumber: mintData.seatNumber,
+                                seats: refreshResult.seats || [],
+                                timestamp: Date.now(),
+                                source: 'mint_success'
+                            }
+                        });
+                        window.dispatchEvent(event);
+                        console.log("✅ Dispatched seatMintedRealtime event for UI update");
+                    }
+
+                    // 4. Clear all related caches
+                    this.clearAllTicketCaches();
+
+                    result.realTimeUpdate = {
+                        success: true,
+                        seatsRefreshed: refreshResult.seats?.length || 0,
+                        timestamp: Date.now()
+                    };
+
+                } catch (refreshError) {
+                    console.warn("⚠️ Seat refresh failed:", refreshError);
+                    result.realTimeUpdate = {
                         success: false,
-                        msg: 'Server returned empty response'
+                        error: refreshError.message
                     };
                 }
 
-                // Check if response indicates success
-                if (result.success === false) {
-                    console.error("Server explicitly returned success: false", result);
-                    return {
-                        success: false,
-                        msg: result.msg || result.error || 'Server reported mint failure',
-                        error: result
-                    };
-                }
-
-                // If no explicit success flag, check for ticket data
-                if (!result.success && !result.ticket) {
-                    console.error("Response missing both success flag and ticket data", result);
-                    return {
-                        success: false,
-                        msg: 'Invalid response structure from server',
-                        error: result
-                    };
-                }
-
-                // Clear all related caches for data freshness
-                this.clearAllTicketCaches();
-                this.clearConcertCache();
-
-                console.log("Mint ticket processed successfully, returning result");
-
-                // Ensure response has success flag
                 return {
                     success: true,
                     ...result
                 };
 
             } catch (fetchError) {
-                // Clear timeout if not already done
                 clearTimeout(timeoutId);
-
                 console.error("Network/fetch error during mint:", fetchError);
 
-                // Handle specific fetch errors
                 if (fetchError.name === 'AbortError') {
                     return {
                         success: false,
-                        msg: 'Request timed out while minting ticket. Please check your connection and try again.',
-                        error: 'timeout'
+                        msg: 'Request timed out while minting ticket'
                     };
                 }
 
-                if (fetchError.message.includes('Failed to fetch')) {
-                    return {
-                        success: false,
-                        msg: 'Network error. Please check your internet connection and try again.',
-                        error: 'network_error'
-                    };
-                }
-
-                // Re-throw other fetch errors
                 throw fetchError;
             }
 
         } catch (error) {
             console.error('Critical error in ApiService.mintTicket:', error);
-
-            // Return structured error response for any uncaught errors
             return {
                 success: false,
-                msg: error.message || 'Unknown error during mint process',
-                error: {
-                    name: error.name,
-                    message: error.message,
-                    stack: error.stack
-                }
+                msg: error.message || 'Unknown error during mint process'
             };
         }
     }
@@ -1415,6 +1356,120 @@ class ApiService {
     }
 
 
+
+
+    async getMintedSeats(concertId) {
+        try {
+            console.log(`🔍 Getting minted seats for concert: ${concertId} (ENHANCED FRESH)`);
+
+            if (!concertId) {
+                console.error("Missing concertId");
+                return { success: false, seats: [], error: 'Concert ID required' };
+            }
+
+            // ✅ ENHANCED: Multiple cache busters untuk ensure fresh data
+            const timestamp = Date.now();
+            const randomId = Math.random().toString(36).substring(2, 8);
+            const userAgent = navigator.userAgent.substring(0, 20);
+
+            // ✅ ENHANCED: API URL dengan multiple cache busters
+            const apiUrl = `${this.baseUrl}/tickets/concerts/${concertId}/minted-seats?t=${timestamp}&r=${randomId}&fresh=true&v=2.0`;
+
+            console.log(`📡 Fetching ENHANCED FRESH from: ${apiUrl}`);
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        // ✅ ENHANCED: Ultra-aggressive cache-busting headers
+                        'Cache-Control': 'no-cache, no-store, must-revalidate, private, max-age=0',
+                        'Pragma': 'no-cache',
+                        'Expires': '0',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-Fresh-Request': 'true',
+                        'X-Timestamp': timestamp.toString(),
+                        'X-Random': randomId,
+                        'X-Concert-Id': concertId.toString()
+                    },
+                    signal: controller.signal,
+                    // ✅ ENHANCED: Force no browser cache
+                    cache: 'no-store'
+                });
+
+                clearTimeout(timeoutId);
+
+                if (!response.ok) {
+                    throw new Error(`API error: ${response.status} ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                console.log('🎫 ENHANCED API Response:', data);
+
+                const seats = data.seats || [];
+                console.log(`✅ ENHANCED FRESH DATA: ${seats.length} minted seats: [${seats.join(', ')}]`);
+
+                // ✅ ENHANCED: Update cache dengan fresh data (opsional, tapi berguna untuk fallback)
+                const cacheKey = `minted_seats_${concertId}`;
+                try {
+                    localStorage.setItem(cacheKey, JSON.stringify(seats));
+                    console.log(`💾 Updated cache for concert ${concertId}`);
+                } catch (cacheErr) {
+                    console.warn('Cache update failed:', cacheErr);
+                }
+
+                return {
+                    success: true,
+                    seats,
+                    timestamp: data.timestamp || timestamp,
+                    source: 'api-enhanced',
+                    fresh: true,
+                    concertId: concertId
+                };
+
+            } catch (fetchError) {
+                clearTimeout(timeoutId);
+
+                console.error('❌ Enhanced API fetch failed:', fetchError);
+
+                if (fetchError.name === 'AbortError') {
+                    console.error('⏰ Request timed out');
+                }
+
+                // ✅ Try cache only if network completely failed
+                const cacheKey = `minted_seats_${concertId}`;
+                try {
+                    const cachedSeats = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+                    if (cachedSeats && cachedSeats.length > 0) {
+                        console.warn(`⚠️ Using cached data (${cachedSeats.length} seats) due to API failure`);
+                        return {
+                            success: true,
+                            seats: cachedSeats,
+                            source: 'cache_fallback',
+                            warning: 'Using cached data due to API failure'
+                        };
+                    }
+                } catch (cacheErr) {
+                    console.error('Cache read failed:', cacheErr);
+                }
+
+                throw fetchError;
+            }
+
+        } catch (error) {
+            console.error('❌ Error getting enhanced minted seats:', error);
+            return {
+                success: false,
+                seats: [],
+                error: error.message,
+                source: 'error'
+            };
+        }
+    }
+
     /**
  * Memperbarui cache tempat duduk yang sudah dibeli
  * @param {string} concertId - ID konser
@@ -1443,15 +1498,15 @@ class ApiService {
             if (!cachedSeats.includes(seatCode)) {
                 cachedSeats.push(seatCode);
                 localStorage.setItem(cacheKey, JSON.stringify(cachedSeats));
+                console.log(`✅ Updated local cache: added seat ${seatCode} for concert ${normalizedConcertId}`);
             }
 
-            console.log(`Updated minted seats cache for concert ${normalizedConcertId}, added seat ${seatCode}`);
-
-            // Refresh from API for consistency
+            // ✅ CRITICAL: Also trigger API refresh untuk ensure consistency
             try {
-                await this.getMintedSeats(normalizedConcertId);
+                const freshData = await this.getMintedSeats(normalizedConcertId);
+                console.log(`✅ Verified with API: ${freshData.seats?.length || 0} total seats`);
             } catch (err) {
-                console.warn("Could not refresh minted seats from API:", err);
+                console.warn("Could not verify with API:", err);
             }
 
             return true;
@@ -1460,106 +1515,6 @@ class ApiService {
             return false;
         }
     }
-
-    async getMintedSeats(concertId) {
-        try {
-            console.log(`🔍 Getting minted seats for concert: ${concertId}`);
-
-            // ✅ FIX 1: Add timestamp for cache busting
-            const timestamp = Date.now();
-
-            // ✅ FIX 2: Correct API endpoint with /tickets/ prefix
-            const apiUrl = `${this.baseUrl}/tickets/concerts/${concertId}/minted-seats?t=${timestamp}`;
-
-            console.log(`📡 Fetching from: ${apiUrl}`);
-
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-            try {
-                const response = await fetch(apiUrl, {
-                    method: 'GET',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        // ✅ FIX 3: Add cache-busting headers
-                        'Cache-Control': 'no-cache, no-store, must-revalidate',
-                        'Pragma': 'no-cache',
-                        'Expires': '0'
-                    },
-                    signal: controller.signal,
-                    // ✅ FIX 4: Disable browser cache
-                    cache: 'no-cache'
-                });
-
-                clearTimeout(timeoutId);
-
-                if (!response.ok) {
-                    throw new Error(`API error: ${response.status} ${response.statusText}`);
-                }
-
-                const data = await response.json();
-                console.log('🎫 API Response:', data);
-
-                const seats = data.seats || [];
-                console.log(`✅ Found ${seats.length} minted seats: [${seats.join(', ')}]`);
-
-                // ✅ FIX 5: Update cache with fresh data (optional - you can remove caching entirely)
-                const cacheKey = `minted_seats_${concertId}`;
-                try {
-                    localStorage.setItem(cacheKey, JSON.stringify(seats));
-                    console.log(`💾 Updated cache for concert ${concertId}`);
-                } catch (cacheErr) {
-                    console.warn('Cache update failed:', cacheErr);
-                }
-
-                return {
-                    success: true,
-                    seats,
-                    timestamp: data.timestamp,
-                    source: 'api'
-                };
-
-            } catch (fetchError) {
-                clearTimeout(timeoutId);
-
-                console.error('❌ API fetch failed:', fetchError);
-
-                // ✅ FIX 6: Only use cache as absolute last resort
-                if (fetchError.name === 'AbortError') {
-                    console.error('⏰ Request timed out');
-                }
-
-                // Try cache only if network completely failed
-                const cacheKey = `minted_seats_${concertId}`;
-                try {
-                    const cachedSeats = JSON.parse(localStorage.getItem(cacheKey) || '[]');
-                    if (cachedSeats && cachedSeats.length > 0) {
-                        console.warn(`⚠️ Using cached data (${cachedSeats.length} seats) due to API failure`);
-                        return {
-                            success: true,
-                            seats: cachedSeats,
-                            source: 'cache_fallback',
-                            warning: 'Using cached data due to API failure'
-                        };
-                    }
-                } catch (cacheErr) {
-                    console.error('Cache read failed:', cacheErr);
-                }
-
-                throw fetchError;
-            }
-
-        } catch (error) {
-            console.error('❌ Error getting minted seats:', error);
-            return {
-                success: false,
-                seats: [],
-                error: error.message,
-                source: 'error'
-            };
-        }
-    }
-
     // ✅ BONUS: Add cache clearing method
     async clearMintedSeatsCache(concertId = null) {
         try {
