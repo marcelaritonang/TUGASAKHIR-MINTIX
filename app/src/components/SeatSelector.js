@@ -5,7 +5,7 @@ import LoadingSpinner from './common/LoadingSpinner';
 import ApiService from '../services/ApiService';
 import blockchainService from '../services/blockchain';
 import socketService from '../services/socketService';
-
+import { API } from '../config/environment';
 const SeatSelector = ({
     ticketType,
     concertId,
@@ -242,7 +242,8 @@ const SeatSelector = ({
 
             // Get current seat locks
             try {
-                const response = await fetch(`/api/system/locks/${concertId}`, {
+                const response = await fetch(`${API.getApiUrl()}/system/locks/${concertId}`, {
+
                     headers: {
                         'x-auth-token': localStorage.getItem('auth_token')
                     }
@@ -425,7 +426,7 @@ const SeatSelector = ({
 
             console.log(`🎫 Reserving seat: ${seat.code}`);
 
-            const response = await fetch('/api/tickets/reserve-seat', {
+            const response = await fetch(`${API.getApiUrl()}/tickets/reserve-seat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -483,7 +484,7 @@ const SeatSelector = ({
 
             console.log(`🔓 Releasing seat reservation: ${myReservation.seatKey}`);
 
-            const response = await fetch('/api/tickets/reserve-seat', {
+            const response = await fetch(`${API.getApiUrl()}/tickets/reserve-seat`, {
                 method: 'DELETE',
                 headers: {
                     'Content-Type': 'application/json',
@@ -766,8 +767,8 @@ const SeatSelector = ({
                         <button
                             onClick={() => setNumberingFormat('theater')}
                             className={`px-2 py-1 text-xs rounded transition-colors ${numberingFormat === 'theater'
-                                    ? 'bg-purple-600 text-white'
-                                    : 'text-gray-400 hover:text-white'
+                                ? 'bg-purple-600 text-white'
+                                : 'text-gray-400 hover:text-white'
                                 }`}
                             title="Theater style: A1, A2, B1, B2"
                         >
@@ -776,8 +777,8 @@ const SeatSelector = ({
                         <button
                             onClick={() => setNumberingFormat('sequential')}
                             className={`px-2 py-1 text-xs rounded transition-colors ${numberingFormat === 'sequential'
-                                    ? 'bg-purple-600 text-white'
-                                    : 'text-gray-400 hover:text-white'
+                                ? 'bg-purple-600 text-white'
+                                : 'text-gray-400 hover:text-white'
                                 }`}
                             title="Sequential: 1, 2, 3, 4, 5"
                         >
@@ -786,8 +787,8 @@ const SeatSelector = ({
                         <button
                             onClick={() => setNumberingFormat('column')}
                             className={`px-2 py-1 text-xs rounded transition-colors ${numberingFormat === 'column'
-                                    ? 'bg-purple-600 text-white'
-                                    : 'text-gray-400 hover:text-white'
+                                ? 'bg-purple-600 text-white'
+                                : 'text-gray-400 hover:text-white'
                                 }`}
                             title="Column per row: 1-9, 1-9, 1-9"
                         >
@@ -798,8 +799,8 @@ const SeatSelector = ({
                     {/* Connection Status */}
                     <div className="flex items-center space-x-2">
                         <div className={`w-2 h-2 rounded-full ${connectionStatus === 'connected' ? 'bg-green-400' :
-                                connectionStatus === 'reserved' ? 'bg-blue-400' :
-                                    connectionStatus === 'error' ? 'bg-red-400' : 'bg-yellow-400'
+                            connectionStatus === 'reserved' ? 'bg-blue-400' :
+                                connectionStatus === 'error' ? 'bg-red-400' : 'bg-yellow-400'
                             }`}></div>
                         <span className="text-xs text-gray-400">
                             {connectionStatus === 'connected' && 'Real-time'}
@@ -815,8 +816,8 @@ const SeatSelector = ({
                     <button
                         onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
                         className={`text-xs px-2 py-1 rounded transition-colors ${autoRefreshEnabled
-                                ? 'bg-green-600 text-white'
-                                : 'bg-gray-600 text-gray-300'
+                            ? 'bg-green-600 text-white'
+                            : 'bg-gray-600 text-gray-300'
                             }`}
                         title={autoRefreshEnabled ? 'Disable auto-refresh' : 'Enable auto-refresh'}
                     >
