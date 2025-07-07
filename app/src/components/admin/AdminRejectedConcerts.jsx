@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import AuthService from '../../services/AuthService';
 import LoadingSpinner from '../common/LoadingSpinner';
+import { API } from '../../config/environment';
 
 const AdminRejectedConcerts = () => {
     const { publicKey } = useWallet();
@@ -38,7 +39,7 @@ const AdminRejectedConcerts = () => {
             }
 
             // Fetch rejected concerts
-            const response = await fetch('http://localhost:5000/api/admin/concerts/rejected', {
+            const response = await fetch(`${API.getApiUrl()}/admin/concerts/rejected`, {
                 headers: {
                     'x-auth-token': AuthService.getToken()
                 }
@@ -135,8 +136,8 @@ const AdminRejectedConcerts = () => {
                                     key={concert._id}
                                     onClick={() => handleSelectConcert(concert)}
                                     className={`p-3 rounded-lg cursor-pointer transition-colors ${selectedConcert?._id === concert._id
-                                            ? 'bg-red-900/30 border border-red-500'
-                                            : 'bg-gray-700/50 hover:bg-gray-700 border border-transparent'
+                                        ? 'bg-red-900/30 border border-red-500'
+                                        : 'bg-gray-700/50 hover:bg-gray-700 border border-transparent'
                                         }`}
                                 >
                                     <div>

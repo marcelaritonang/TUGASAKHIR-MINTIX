@@ -4,6 +4,7 @@ import AuthService from '../../services/AuthService';
 import ApiService from '../../services/ApiService';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { useConcerts } from '../../context/ConcertContext';
+import { API } from '../../config/environment';
 
 const AdminConcertApproval = () => {
     const { publicKey } = useWallet();
@@ -27,6 +28,23 @@ const AdminConcertApproval = () => {
 
     // Ref untuk mencegah duplikasi loading
     const loadingRef = useRef(false);
+
+    // ✅ Environment debug info
+    useEffect(() => {
+        console.log('🔧 AdminConcertApproval Environment:');
+        console.log('   API URL:', API.getApiUrl());
+        console.log('   Environment:', API.getEnvironment());
+        console.log('   Hostname:', window.location.hostname);
+
+        // Test API connection
+        API.testConnection().then(result => {
+            if (result.success) {
+                console.log('✅ Admin API connection verified');
+            } else {
+                console.warn('⚠️ Admin API connection issue:', result.error);
+            }
+        });
+    }, []);
 
     // Inisialisasi Auth
     useEffect(() => {
@@ -130,11 +148,11 @@ const AdminConcertApproval = () => {
                     await loadAdminPendingConcerts();
                     concertData = pendingConcerts;
                 }
-                // Method 3: Direct fetch
+                // Method 3: Direct fetch with dynamic URL
                 else {
-                    console.log("Using direct fetch for pending concerts");
+                    console.log("Using direct fetch for pending concerts with dynamic URL");
                     const token = AuthService.getToken();
-                    const response = await fetch('http://localhost:5000/api/concerts/pending', {
+                    const response = await fetch(`${API.getApiUrl()}/concerts/pending`, {
                         headers: {
                             'x-auth-token': token
                         }
@@ -153,7 +171,7 @@ const AdminConcertApproval = () => {
                 try {
                     console.log("Trying admin endpoint instead");
                     const token = AuthService.getToken();
-                    const response = await fetch('http://localhost:5000/api/admin/concerts/pending', {
+                    const response = await fetch(`${API.getApiUrl()}/admin/concerts/pending`, {
                         headers: {
                             'x-auth-token': token
                         }
@@ -231,8 +249,8 @@ const AdminConcertApproval = () => {
                     throw new Error("No authentication token found");
                 }
 
-                // Try the approve endpoint
-                const response = await fetch(`http://localhost:5000/api/concerts/${concertId}/approve`, {
+                // Try the approve endpoint with dynamic URL
+                const response = await fetch(`${API.getApiUrl()}/concerts/${concertId}/approve`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -272,7 +290,7 @@ const AdminConcertApproval = () => {
                 // Try alternative admin endpoint
                 try {
                     const token = AuthService.getToken();
-                    const response = await fetch(`http://localhost:5000/api/admin/concerts/${concertId}/approve`, {
+                    const response = await fetch(`${API.getApiUrl()}/admin/concerts/${concertId}/approve`, {
                         method: 'PUT',
                         headers: {
                             'Content-Type': 'application/json',
@@ -340,8 +358,8 @@ const AdminConcertApproval = () => {
                     throw new Error("No authentication token found");
                 }
 
-                // Try the standard reject endpoint
-                const response = await fetch(`http://localhost:5000/api/concerts/${concertId}/reject`, {
+                // Try the standard reject endpoint with dynamic URL
+                const response = await fetch(`${API.getApiUrl()}/concerts/${concertId}/reject`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -377,7 +395,7 @@ const AdminConcertApproval = () => {
                 // Try alternative admin endpoint
                 try {
                     const token = AuthService.getToken();
-                    const response = await fetch(`http://localhost:5000/api/admin/concerts/${concertId}/reject`, {
+                    const response = await fetch(`${API.getApiUrl()}/admin/concerts/${concertId}/reject`, {
                         method: 'PUT',
                         headers: {
                             'Content-Type': 'application/json',
@@ -440,8 +458,8 @@ const AdminConcertApproval = () => {
                     throw new Error("No authentication token found");
                 }
 
-                // Try the standard endpoint
-                const response = await fetch(`http://localhost:5000/api/concerts/${concertId}/request-info`, {
+                // Try the standard endpoint with dynamic URL
+                const response = await fetch(`${API.getApiUrl()}/concerts/${concertId}/request-info`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -477,7 +495,7 @@ const AdminConcertApproval = () => {
                 // Try alternative admin endpoint
                 try {
                     const token = AuthService.getToken();
-                    const response = await fetch(`http://localhost:5000/api/admin/concerts/${concertId}/request-info`, {
+                    const response = await fetch(`${API.getApiUrl()}/admin/concerts/${concertId}/request-info`, {
                         method: 'PUT',
                         headers: {
                             'Content-Type': 'application/json',
@@ -544,8 +562,8 @@ const AdminConcertApproval = () => {
             let concertData = [];
 
             try {
-                // First try /concerts/pending
-                response = await fetch('http://localhost:5000/api/concerts/pending', {
+                // First try /concerts/pending with dynamic URL
+                response = await fetch(`${API.getApiUrl()}/concerts/pending`, {
                     headers: {
                         'x-auth-token': token
                     }
@@ -560,8 +578,8 @@ const AdminConcertApproval = () => {
             } catch (firstError) {
                 console.log("First endpoint failed, trying admin endpoint...");
 
-                // Then try /admin/concerts/pending
-                response = await fetch('http://localhost:5000/api/admin/concerts/pending', {
+                // Then try /admin/concerts/pending with dynamic URL
+                response = await fetch(`${API.getApiUrl()}/admin/concerts/pending`, {
                     headers: {
                         'x-auth-token': token
                     }
@@ -609,11 +627,27 @@ const AdminConcertApproval = () => {
         <div className="container mx-auto p-6">
             <h1 className="text-2xl font-bold mb-6 text-white">Admin Panel</h1>
 
-            {/* Auth Debug Info */}
+            {/* ✅ Environment Debug Info */}
             <div className="bg-gray-800 p-4 rounded-lg mb-6">
-                <h2 className="text-lg font-semibold text-white mb-2">Authentication Status</h2>
-                <p className="text-gray-300">Token: {authStatus.token ? 'Available' : 'Not available'}</p>
-                <p className="text-gray-300">Admin: {authStatus.isAdmin ? 'Yes' : 'No'}</p>
+                <h2 className="text-lg font-semibold text-white mb-2">Environment Status</h2>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                        <p className="text-gray-400">Environment:</p>
+                        <p className="text-green-400 font-mono">{API.getEnvironment()}</p>
+                    </div>
+                    <div>
+                        <p className="text-gray-400">API URL:</p>
+                        <p className="text-blue-400 font-mono text-xs">{API.getApiUrl()}</p>
+                    </div>
+                    <div>
+                        <p className="text-gray-400">Auth Token:</p>
+                        <p className="text-white">{authStatus.token ? 'Available' : 'Not available'}</p>
+                    </div>
+                    <div>
+                        <p className="text-gray-400">Admin Status:</p>
+                        <p className="text-white">{authStatus.isAdmin ? 'Yes' : 'No'}</p>
+                    </div>
+                </div>
                 <div className="mt-2">
                     <button
                         onClick={handleRefresh}
@@ -675,6 +709,9 @@ const AdminConcertApproval = () => {
                 ) : pendingConcertsList.length === 0 ? (
                     <div className="text-center py-10">
                         <p className="text-gray-400">No pending concerts to review.</p>
+                        <p className="text-gray-500 text-sm mt-2">
+                            This could mean all concerts have been processed or no new submissions.
+                        </p>
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

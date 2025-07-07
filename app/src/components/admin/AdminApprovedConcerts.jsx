@@ -4,6 +4,8 @@ import { Link } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import AuthService from '../../services/AuthService';
 import LoadingSpinner from '../common/LoadingSpinner';
+// Tambahkan di bagian atas setelah import yang sudah ada
+import { API } from '../../config/environment';
 
 const AdminApprovedConcerts = () => {
     const { publicKey } = useWallet();
@@ -40,7 +42,8 @@ const AdminApprovedConcerts = () => {
             }
 
             // Fetch approved concerts
-            const response = await fetch('http://localhost:5000/api/admin/concerts/approved', {
+            // AFTER:
+            const response = await fetch(`${API.getApiUrl()}/admin/concerts/approved`, {
                 headers: {
                     'x-auth-token': AuthService.getToken()
                 }
