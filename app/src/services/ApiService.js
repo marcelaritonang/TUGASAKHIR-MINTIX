@@ -1,48 +1,91 @@
 // src/services/ApiService.js - Enhanced version with improved blockchain methods
 class ApiService {
     constructor() {
-        // FIX: HARDCODE base URL untuk prevent connection issues
-        this.baseUrl = process.env.REACT_APP_API_URL ||
-            (process.env.NODE_ENV === 'production'
-                ? 'https://tugasakhir-mintix-production.up.railway.app/api'
-                : 'http://localhost:5000/api');
+        // ✅ ENHANCED: Smart URL determination with Railway priority
+        this.baseUrl = this.determineBaseUrl();
 
+        // Enhanced debug logging
+        console.log('🔗 ApiService Configuration:');
+        console.log('   Environment:', process.env.NODE_ENV);
+        console.log('   REACT_APP_API_URL:', process.env.REACT_APP_API_URL);
+        console.log('   Final baseUrl:', this.baseUrl);
+        console.log('   Current hostname:', typeof window !== 'undefined' ? window.location.hostname : 'N/A');
 
-        // Debug logging
-        console.log('🔗 ApiService baseUrl:', this.baseUrl);
-        console.log('🌍 Environment:', process.env.NODE_ENV);
-        console.log('🔧 REACT_APP_API_URL:', process.env.REACT_APP_API_URL);
-        // Cache for storing data
+        // Cache configuration (keep existing)
         this.cache = {
-            concerts: {
-                data: null,
-                timestamp: 0
-            },
-            pendingConcerts: {
-                data: null,
-                timestamp: 0
-            },
+            concerts: { data: null, timestamp: 0 },
+            pendingConcerts: { data: null, timestamp: 0 },
             mintedSeats: {},
             lastFetch: {},
             transactions: {}
         };
 
-        // REDUCED cache duration to prevent stale data
-        this.concertCacheDuration = 30000; // 30 seconds instead of 15
+        this.concertCacheDuration = 30000;
         this.pendingConcertsCacheDuration = 10000;
         this.seatCacheDuration = 30000;
         this.transactionCacheDuration = 60000;
     }
 
+    // ✅ NEW: Smart base URL determination with Railway priority
+    determineBaseUrl() {
+        // Priority 1: Environment variable (highest priority)
+        if (process.env.REACT_APP_API_URL) {
+            const url = process.env.REACT_APP_API_URL;
+            console.log('🎯 Using REACT_APP_API_URL:', url);
+            return url;
+        }
 
+        // Priority 2: Auto-detect based on current domain
+        if (typeof window !== 'undefined') {
+            const hostname = window.location.hostname;
 
-    // Helper to get headers with token for JSON requests
+            // If on Vercel production
+            if (hostname.includes('vercel.app') ||
+                hostname.includes('tugasakhir-mintix') ||
+                hostname.includes('mintix')) {
+                const railwayUrl = 'https://tugasakhir-mintix-production.up.railway.app/api';
+                console.log('🚀 Detected Vercel deployment, using Railway:', railwayUrl);
+                return railwayUrl;
+            }
+
+            // If on localhost (development)
+            if (hostname === 'localhost' || hostname === '127.0.0.1') {
+                const localUrl = 'http://localhost:5000/api';
+                console.log('🏠 Detected localhost, using local backend:', localUrl);
+                return localUrl;
+            }
+        }
+
+        // Priority 3: Environment-based fallback
+        const fallbackUrl = process.env.NODE_ENV === 'production'
+            ? 'https://tugasakhir-mintix-production.up.railway.app/api'
+            : 'http://localhost:5000/api';
+
+        console.log('⚠️ Using fallback URL:', fallbackUrl);
+        return fallbackUrl;
+    }
+
+    // ✅ ENHANCED: Better header management with Railway optimization
     _getHeaders() {
         const token = localStorage.getItem('auth_token');
-        return {
+        const headers = {
             'Content-Type': 'application/json',
-            ...(token && { 'x-auth-token': token })
+            'Accept': 'application/json',
+            // ✅ NEW: Railway-specific headers
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
         };
+
+        if (token) {
+            headers['x-auth-token'] = token;
+        }
+
+        // ✅ NEW: Add debugging header in development
+        if (process.env.NODE_ENV === 'development') {
+            headers['X-Debug-Source'] = 'frontend-dev';
+        }
+
+        return headers;
     }
 
     // Helper to get headers for multipart requests
@@ -53,52 +96,172 @@ class ApiService {
 
     // Helper to handle response errors better
     async _handleResponse(response, errorMessage = 'API request failed') {
+        console.log(`🔍 Response from ${response.url}:`);
+        console.log(`   Status: ${response.status} ${response.statusText}`);
+        console.log(`   Headers:`, Object.fromEntries(response.headers.entries()));
+
         if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            const error = new Error(errorData.msg || `${errorMessage}: ${response.status}`);
+            let errorData = {};
+            let errorText = '';
+
+            try {
+                const contentType = response.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    errorData = await response.json();
+                } else {
+                    errorText = await response.text();
+                    console.log('📝 Non-JSON error response:', errorText.substring(0, 200));
+                }
+            } catch (parseError) {
+                console.warn('⚠️ Could not parse error response:', parseError);
+            }
+
+            const error = new Error(
+                errorData.msg ||
+                errorData.message ||
+                errorText ||
+                `${errorMessage}: ${response.status}`
+            );
             error.status = response.status;
+            error.response = errorData;
+
+            // ✅ NEW: Special handling for Railway-specific errors
+            if (response.status === 503) {
+                error.message = 'Backend service temporarily unavailable. Please try again in a moment.';
+            } else if (response.status === 502) {
+                error.message = 'Backend gateway error. Please check your connection.';
+            }
+
             throw error;
         }
-        return response.json();
-    }
 
-    // Clear all cache
-    clearCache() {
-        this.cache = {
-            concerts: {
-                data: null,
-                timestamp: 0
-            },
-            pendingConcerts: {
-                data: null,
-                timestamp: 0
-            },
-            mintedSeats: {},
-            lastFetch: {},
-            transactions: {}
-        };
-        console.log("API cache cleared");
-    }
-    // Bersihkan cache konser
-    clearConcertCache() {
-        console.log("Clearing concert cache");
-        if (this.cache && this.cache.concerts) {
-            this.cache.concerts.data = null;
-            this.cache.concerts.timestamp = 0;
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+            return response.json();
+        } else {
+            const text = await response.text();
+            console.warn('⚠️ Non-JSON success response:', text.substring(0, 200));
+            return { message: text, success: true };
         }
-        localStorage.removeItem('concerts');
-        localStorage.removeItem('approved_concerts');
     }
 
-    // Bersihkan cache konser pending
-    clearPendingConcertsCache() {
-        console.log("Clearing pending concerts cache");
-        this.cache.pendingConcerts.data = null;
-        this.cache.pendingConcerts.timestamp = 0;
-        // Remove from localStorage as well
-        localStorage.removeItem('pendingConcerts');
+    async _makeRequest(endpoint, options = {}) {
+        const url = `${this.baseUrl}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
+
+        console.log(`📡 Making request to: ${url}`);
+        console.log('📋 Request details:', {
+            method: options.method || 'GET',
+            headers: Object.keys(options.headers || this._getHeaders()),
+            hasBody: !!options.body,
+            timestamp: new Date().toISOString()
+        });
+
+        // ✅ ENHANCED: Longer timeout for Railway (can be slower than localhost)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => {
+            console.log('⏰ Request timeout, aborting...');
+            controller.abort();
+        }, 45000); // 45 second timeout for Railway
+
+        const requestOptions = {
+            method: 'GET',
+            headers: this._getHeaders(),
+            signal: controller.signal,
+            ...options
+        };
+
+        try {
+            const response = await fetch(url, requestOptions);
+            clearTimeout(timeoutId);
+
+            return await this._handleResponse(response);
+        } catch (error) {
+            clearTimeout(timeoutId);
+
+            if (error.name === 'AbortError') {
+                console.error('⏰ Request timed out to:', url);
+                throw new Error('Request timed out. Railway backend may be slow, please try again.');
+            }
+
+            if (error.message?.includes('Failed to fetch')) {
+                console.error('🌐 Network error to:', url);
+                throw new Error('Network error. Please check your internet connection and Railway backend status.');
+            }
+
+            console.error('❌ Request failed to:', url, error);
+            throw error;
+        }
     }
 
+    // ✅ NEW: Connection test methods
+    async testConnection() {
+        try {
+            console.log('🧪 Testing connection to Railway backend...');
+            const startTime = Date.now();
+
+            const response = await this._makeRequest('/health');
+            const responseTime = Date.now() - startTime;
+
+            console.log(`✅ Connection test successful (${responseTime}ms):`, response);
+            return {
+                success: true,
+                data: response,
+                responseTime,
+                baseUrl: this.baseUrl
+            };
+        } catch (error) {
+            console.error('❌ Connection test failed:', error);
+            return {
+                success: false,
+                error: error.message,
+                baseUrl: this.baseUrl
+            };
+        }
+    }
+
+    async testAuth() {
+        try {
+            console.log('🔐 Testing authentication with Railway...');
+            const token = localStorage.getItem('auth_token');
+
+            if (!token) {
+                return { success: false, error: 'No token found' };
+            }
+
+            const response = await this._makeRequest('/auth/validate');
+            console.log('✅ Auth test successful:', response);
+            return { success: true, data: response };
+        } catch (error) {
+            console.error('❌ Auth test failed:', error);
+
+            // If auth fails with 401, clear token
+            if (error.status === 401) {
+                localStorage.removeItem('auth_token');
+            }
+
+            return { success: false, error: error.message };
+        }
+    }
+
+    // ✅ NEW: Railway health check
+    async healthCheck() {
+        try {
+            const response = await this._makeRequest('/health');
+            return { success: true, health: response };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
+
+    // ✅ NEW: System status check
+    async getSystemStatus() {
+        try {
+            const response = await this._makeRequest('/system/status');
+            return { success: true, status: response };
+        } catch (error) {
+            return { success: false, error: error.message };
+        }
+    }
 
     async getConcerts(forceRefresh = false) {
         try {
@@ -1945,7 +2108,22 @@ class ApiService {
             throw error;
         }
     }
+    async debugInfo() {
+        const info = {
+            baseUrl: this.baseUrl,
+            environment: process.env.NODE_ENV,
+            reactAppApiUrl: process.env.REACT_APP_API_URL,
+            hostname: typeof window !== 'undefined' ? window.location.hostname : 'N/A',
+            hasToken: !!localStorage.getItem('auth_token'),
+            cacheStatus: {
+                concerts: !!this.cache.concerts.data,
+                concertCount: this.cache.concerts.data?.length || 0
+            }
+        };
 
+        console.log('🔍 ApiService Debug Info:', info);
+        return info;
+    }
     // Enhanced error handling for all API calls
     async _makeRequest(url, options = {}) {
         const controller = new AbortController();
