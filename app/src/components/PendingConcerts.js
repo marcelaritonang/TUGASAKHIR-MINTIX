@@ -4,7 +4,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { useNavigate } from 'react-router-dom';
 import ApiService from '../services/ApiService';
 import AuthService from '../services/AuthService';
-
+import { API } from '../config/environment';
 // Komponen LoadingSpinner
 const LoadingSpinner = () => (
     <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-purple-500"></div>
@@ -95,7 +95,7 @@ const PendingConcerts = () => {
                 throw new Error("No auth token available");
             }
 
-            const response = await fetch(`${ApiService.baseUrl || 'http://localhost:5000/api'}/concerts/me/pending`, {
+            const response = await fetch(`${API.getApiUrl()}/concerts/me/pending`, {
                 headers: {
                     'x-auth-token': token
                 }

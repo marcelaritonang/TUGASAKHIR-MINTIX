@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 import AuthService from '../../services/AuthService';
 import LoadingSpinner from '../common/LoadingSpinner';
+import { API } from '../../config/environment';
 
 const AdminSettings = () => {
     const { publicKey } = useWallet();
@@ -23,7 +24,114 @@ const AdminSettings = () => {
     const [error, setError] = useState('');
     const [successMessage, setSuccessMessage] = useState('');
 
-    // Inisialisasi di component mount
+    // ✅ Environment debug info
+    useEffect(() => {
+        console.log('🔧 AdminSettings Environment:');
+        console.log('   API URL:', API.getApiUrl());
+        console.log('   Environment:', API.getEnvironment());
+        console.log('   Hostname:', window.location.hostname);
+
+        // Test API connection
+        API.testConnection().then(result => {
+            if (result.success) {
+                console.log('✅ AdminSettings API connection verified');
+            } else {
+                console.warn('⚠️ AdminSettings API connection issue:', result.error);
+            }
+        });
+    }, []);
+
+    // Metode alternatif: hitung masing-masing status
+    const fetchConcertCounts = useCallback(async () => {
+        try {
+            // Ambil pending concerts
+            const pendingResponse = await fetch(`${API.getApiUrl()}/admin/concerts/pending`, {
+                headers: {
+                    'x-auth-token': AuthService.getToken()
+                }
+            });
+
+            // Ambil approved concerts
+            const approvedResponse = await fetch(`${API.getApiUrl()}/admin/concerts/approved`, {
+                headers: {
+                    'x-auth-token': AuthService.getToken()
+                }
+            });
+
+            // Ambil rejected concerts
+            const rejectedResponse = await fetch(`${API.getApiUrl()}/admin/concerts/rejected`, {
+                headers: {
+                    'x-auth-token': AuthService.getToken()
+                }
+            });
+
+            // Proses data
+            const pending = pendingResponse.ok ? await pendingResponse.json() : [];
+            const approved = approvedResponse.ok ? await approvedResponse.json() : [];
+            const rejected = rejectedResponse.ok ? await rejectedResponse.json() : [];
+
+            // Hitung info requested
+            const infoRequested = pending.filter(c => c.status === 'info_requested').length;
+            const pendingCount = pending.filter(c => c.status === 'pending').length;
+
+            // Update statistik
+            setApprovalStats({
+                pending: pendingCount,
+                infoRequested: infoRequested,
+                approved: Array.isArray(approved) ? approved.length : 0,
+                rejected: Array.isArray(rejected) ? rejected.length : 0
+            });
+        } catch (err) {
+            console.error('Error fetching concert counts:', err);
+            // Fallback ke localStorage jika API tetap gagal
+            console.log('Falling back to localStorage for stats');
+
+            const pendingConcerts = JSON.parse(localStorage.getItem('pendingConcerts') || '[]');
+            const infoRequested = pendingConcerts.filter(c => c.status === 'info_requested').length;
+            const pendingCount = pendingConcerts.filter(c => c.status === 'pending').length;
+
+            const approvedConcerts = JSON.parse(localStorage.getItem('concertDetails') || '[]');
+            const rejectedConcerts = JSON.parse(localStorage.getItem('rejectedConcerts') || '[]');
+
+            setApprovalStats({
+                pending: pendingCount,
+                infoRequested: infoRequested,
+                approved: approvedConcerts.length,
+                rejected: rejectedConcerts.length
+            });
+        }
+    }, []);
+
+    // ✅ FIXED: Ambil statistik konser dari API dengan useCallback
+    const fetchConcertStats = useCallback(async () => {
+        try {
+            const response = await fetch(`${API.getApiUrl()}/admin/concerts/stats`, {
+                headers: {
+                    'x-auth-token': AuthService.getToken()
+                }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                console.log('Fetched concert stats:', data);
+
+                setApprovalStats({
+                    pending: data.pending || 0,
+                    infoRequested: data.infoRequested || 0,
+                    approved: data.approved || 0,
+                    rejected: data.rejected || 0
+                });
+            } else {
+                // Jika API gagal, ambil dari endpoint alternatif
+                await fetchConcertCounts();
+            }
+        } catch (err) {
+            console.error('Error fetching concert stats:', err);
+            await fetchConcertCounts();
+        }
+    }, [fetchConcertCounts]);
+
+    // ✅ FIXED: Inisialisasi di component mount dengan dependency yang benar
     useEffect(() => {
         const initAuth = async () => {
             try {
@@ -69,97 +177,7 @@ const AdminSettings = () => {
         };
 
         initAuth();
-    }, [publicKey]);
-
-    // Ambil statistik konser dari API
-    const fetchConcertStats = async () => {
-        try {
-            const response = await fetch('http://localhost:5000/api/admin/concerts/stats', {
-                headers: {
-                    'x-auth-token': AuthService.getToken()
-                }
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                console.log('Fetched concert stats:', data);
-
-                setApprovalStats({
-                    pending: data.pending || 0,
-                    infoRequested: data.infoRequested || 0,
-                    approved: data.approved || 0,
-                    rejected: data.rejected || 0
-                });
-            } else {
-                // Jika API gagal, ambil dari endpoint alternatif
-                await fetchConcertCounts();
-            }
-        } catch (err) {
-            console.error('Error fetching concert stats:', err);
-            await fetchConcertCounts();
-        }
-    };
-
-    // Metode alternatif: hitung masing-masing status
-    const fetchConcertCounts = async () => {
-        try {
-            // Ambil pending concerts
-            const pendingResponse = await fetch('http://localhost:5000/api/admin/concerts/pending', {
-                headers: {
-                    'x-auth-token': AuthService.getToken()
-                }
-            });
-
-            // Ambil approved concerts
-            const approvedResponse = await fetch('http://localhost:5000/api/admin/concerts/approved', {
-                headers: {
-                    'x-auth-token': AuthService.getToken()
-                }
-            });
-
-            // Ambil rejected concerts
-            const rejectedResponse = await fetch('http://localhost:5000/api/admin/concerts/rejected', {
-                headers: {
-                    'x-auth-token': AuthService.getToken()
-                }
-            });
-
-            // Proses data
-            const pending = pendingResponse.ok ? await pendingResponse.json() : [];
-            const approved = approvedResponse.ok ? await approvedResponse.json() : [];
-            const rejected = rejectedResponse.ok ? await rejectedResponse.json() : [];
-
-            // Hitung info requested
-            const infoRequested = pending.filter(c => c.status === 'info_requested').length;
-            const pendingCount = pending.filter(c => c.status === 'pending').length;
-
-            // Update statistik
-            setApprovalStats({
-                pending: pendingCount,
-                infoRequested: infoRequested,
-                approved: Array.isArray(approved) ? approved.length : 0,
-                rejected: Array.isArray(rejected) ? rejected.length : 0
-            });
-        } catch (err) {
-            console.error('Error fetching concert counts:', err);
-            // Fallback ke localStorage jika API tetap gagal
-            console.log('Falling back to localStorage for stats');
-
-            const pendingConcerts = JSON.parse(localStorage.getItem('pendingConcerts') || '[]');
-            const infoRequested = pendingConcerts.filter(c => c.status === 'info_requested').length;
-            const pendingCount = pendingConcerts.filter(c => c.status === 'pending').length;
-
-            const approvedConcerts = JSON.parse(localStorage.getItem('concertDetails') || '[]');
-            const rejectedConcerts = JSON.parse(localStorage.getItem('rejectedConcerts') || '[]');
-
-            setApprovalStats({
-                pending: pendingCount,
-                infoRequested: infoRequested,
-                approved: approvedConcerts.length,
-                rejected: rejectedConcerts.length
-            });
-        }
-    };
+    }, [publicKey, fetchConcertStats]);
 
     // Perpanjang sesi admin
     const handleExtendSession = async () => {
@@ -206,6 +224,89 @@ const AdminSettings = () => {
         return `${hours} jam, ${minutes} menit`;
     };
 
+    // ✅ FIXED: Create test concert with better error handling
+    const handleCreateTestConcert = async () => {
+        try {
+            const response = await fetch(`${API.getApiUrl()}/concerts`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-auth-token': AuthService.getToken()
+                },
+                body: JSON.stringify({
+                    name: "Test Concert " + new Date().toLocaleDateString(),
+                    venue: "Test Venue",
+                    date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 hari dari sekarang
+                    description: "Test concert created from admin panel",
+                    category: "rock",
+                    sections: [
+                        {
+                            name: "VIP",
+                            price: 0.5,
+                            totalSeats: 100,
+                            availableSeats: 100
+                        },
+                        {
+                            name: "Regular",
+                            price: 0.1,
+                            totalSeats: 200,
+                            availableSeats: 200
+                        }
+                    ],
+                    totalTickets: 300
+                })
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                console.log('Test concert created:', result);
+                setSuccessMessage('Test concert created successfully');
+                await fetchConcertStats();
+            } else {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.msg || errorData.message || `Failed to create test concert: ${response.status}`);
+            }
+        } catch (err) {
+            console.error('Error creating test concert:', err);
+            setError('Failed to create test concert: ' + err.message);
+        }
+
+        // Reset messages after 3 seconds
+        setTimeout(() => {
+            setSuccessMessage('');
+            setError('');
+        }, 3000);
+    };
+
+    // ✅ FIXED: Clear messages after actions
+    const handleTestLogin = async () => {
+        try {
+            const success = await AuthService.loginTest();
+            if (success) {
+                setSuccessMessage('Login test successful');
+            } else {
+                setError('Login test failed');
+            }
+        } catch (err) {
+            setError('Login test error: ' + err.message);
+        }
+
+        setTimeout(() => {
+            setSuccessMessage('');
+            setError('');
+        }, 3000);
+    };
+
+    const handleClearLocalData = () => {
+        localStorage.removeItem('pendingConcerts');
+        localStorage.removeItem('concertDetails');
+        localStorage.removeItem('rejectedConcerts');
+        fetchConcertStats();
+        setSuccessMessage('All concert data cleared from localStorage');
+
+        setTimeout(() => setSuccessMessage(''), 3000);
+    };
+
     if (loading) {
         return (
             <div className="flex justify-center items-center min-h-[300px]">
@@ -217,6 +318,21 @@ const AdminSettings = () => {
     return (
         <div className="container mx-auto p-6">
             <h1 className="text-3xl font-bold mb-8 text-white">Admin Settings</h1>
+
+            {/* ✅ Environment Debug Info */}
+            <div className="bg-gray-800 p-4 rounded-lg mb-6">
+                <h2 className="text-lg font-semibold text-white mb-2">Environment Status</h2>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                        <p className="text-gray-400">Environment:</p>
+                        <p className="text-green-400 font-mono">{API.getEnvironment()}</p>
+                    </div>
+                    <div>
+                        <p className="text-gray-400">API URL:</p>
+                        <p className="text-blue-400 font-mono text-xs">{API.getApiUrl()}</p>
+                    </div>
+                </div>
+            </div>
 
             {error && (
                 <div className="bg-red-900/20 border border-red-500 rounded-lg p-4 mb-6">
@@ -316,77 +432,21 @@ const AdminSettings = () => {
 
                 <div className="flex flex-wrap gap-3">
                     <button
-                        onClick={async () => {
-                            try {
-                                // Coba buat test concert
-                                const response = await fetch('http://localhost:5000/api/concerts', {
-                                    method: 'POST',
-                                    headers: {
-                                        'Content-Type': 'application/json',
-                                        'x-auth-token': AuthService.getToken()
-                                    },
-                                    body: JSON.stringify({
-                                        name: "Test Concert " + new Date().toLocaleDateString(),
-                                        venue: "Test Venue",
-                                        date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 hari dari sekarang
-                                        description: "Test concert created from admin panel",
-                                        category: "Rock",
-                                        sections: [
-                                            {
-                                                name: "VIP",
-                                                price: 500,
-                                                totalSeats: 100,
-                                                availableSeats: 100
-                                            },
-                                            {
-                                                name: "Regular",
-                                                price: 100,
-                                                totalSeats: 200,
-                                                availableSeats: 200
-                                            }
-                                        ],
-                                        totalTickets: 300
-                                    })
-                                });
-
-                                if (response.ok) {
-                                    setSuccessMessage('Test concert created successfully');
-                                    fetchConcertStats();
-                                } else {
-                                    throw new Error(`Failed to create test concert: ${response.status}`);
-                                }
-                            } catch (err) {
-                                console.error('Error creating test concert:', err);
-                                setError('Failed to create test concert: ' + err.message);
-                            }
-                        }}
+                        onClick={handleCreateTestConcert}
                         className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded transition-colors"
                     >
                         Create Test Concert
                     </button>
 
                     <button
-                        onClick={() => {
-                            localStorage.removeItem('pendingConcerts');
-                            localStorage.removeItem('concertDetails');
-                            localStorage.removeItem('rejectedConcerts');
-                            fetchConcertStats();
-                            setSuccessMessage('All concert data cleared from localStorage');
-                        }}
+                        onClick={handleClearLocalData}
                         className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
                     >
                         Clear Local Concert Data
                     </button>
 
                     <button
-                        onClick={async () => {
-                            const success = await AuthService.loginTest();
-                            if (success) {
-                                setSuccessMessage('Login test successful');
-                            } else {
-                                setError('Login test failed');
-                            }
-                        }}
+                        onClick={handleTestLogin}
                         className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
                     >
                         Test Login
