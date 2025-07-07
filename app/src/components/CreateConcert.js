@@ -1,4 +1,4 @@
-// src/components/CreateConcert.jsx
+// src/components/CreateConcert.jsx - COMPLETE FIXED VERSION
 
 import React, { useState, useEffect } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
@@ -14,6 +14,38 @@ import ApiService from '../services/ApiService';
 import AuthService from '../services/AuthService';
 
 const CreateConcert = () => {
+    // ✅ SMART API URL DETECTION - Works for localhost & production
+    const getApiUrl = () => {
+        // Priority 1: Environment variable
+        if (process.env.REACT_APP_API_URL) {
+            console.log('🔧 Using REACT_APP_API_URL:', process.env.REACT_APP_API_URL);
+            return process.env.REACT_APP_API_URL;
+        }
+
+        // Priority 2: Auto-detect based on domain
+        const hostname = window.location.hostname;
+        console.log('🔧 Auto-detecting API URL for hostname:', hostname);
+
+        // Production detection (Vercel)
+        if (hostname.includes('vercel.app') || hostname.includes('tugasakhir-mintix')) {
+            console.log('🔧 ✅ Production detected → Using Railway backend');
+            return 'https://tugasakhir-mintix-production.up.railway.app/api';
+        }
+
+        // Local development
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+            console.log('🔧 ✅ Localhost detected → Using local backend');
+            return 'http://localhost:5000/api';
+        }
+
+        // Fallback to production
+        console.log('🔧 ⚠️ Unknown environment → Using Railway backend');
+        return 'https://tugasakhir-mintix-production.up.railway.app/api';
+    };
+
+    // ✅ GET API URL
+    const API_BASE_URL = getApiUrl();
+
     // Basic concert info
     const [name, setName] = useState('');
     const [venue, setVenue] = useState('');
@@ -57,6 +89,36 @@ const CreateConcert = () => {
     // Available categories
     const categories = ['festival', 'rock', 'jazz', 'classical', 'hiphop', 'electronic', 'pop', 'country', 'other'];
 
+    // ✅ DEBUG LOGGING untuk environment
+    useEffect(() => {
+        console.log('🔧 CreateConcert Environment Debug:');
+        console.log('   API_BASE_URL:', API_BASE_URL);
+        console.log('   REACT_APP_API_URL:', process.env.REACT_APP_API_URL);
+        console.log('   Current hostname:', window.location.hostname);
+        console.log('   NODE_ENV:', process.env.NODE_ENV);
+    }, [API_BASE_URL]);
+
+    // ✅ TEST API CONNECTIVITY
+    useEffect(() => {
+        const testConnection = async () => {
+            try {
+                console.log('🧪 Testing API connection...');
+                const healthUrl = `${API_BASE_URL.replace('/api', '')}/health`;
+                const response = await fetch(healthUrl);
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('✅ API connection successful:', data.status);
+                } else {
+                    console.warn('⚠️ API health check failed:', response.status);
+                }
+            } catch (error) {
+                console.error('❌ API connection test failed:', error.message);
+            }
+        };
+
+        testConnection();
+    }, [API_BASE_URL]);
+
     // Check authentication status when component mounts
     useEffect(() => {
         const checkAuth = async () => {
@@ -99,7 +161,7 @@ const CreateConcert = () => {
         return () => clearInterval(interval);
     }, [wallet, wallet.publicKey]);
 
-    // Handle login with backend
+    // ✅ FIXED: Handle login with dynamic API URL
     const handleLogin = async () => {
         if (!wallet.connected || !wallet.publicKey) {
             setError('Please connect your wallet first');
@@ -110,8 +172,11 @@ const CreateConcert = () => {
         setError('');
 
         try {
-            // Try login-test endpoint for simplicity in development
-            const response = await fetch('http://localhost:5000/api/auth/login-test', {
+            // ✅ FIXED: Use dynamic API URL instead of hardcoded localhost
+            const loginUrl = `${API_BASE_URL}/auth/login-test`;
+            console.log('🔐 Attempting login with:', loginUrl);
+
+            const response = await fetch(loginUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -120,6 +185,8 @@ const CreateConcert = () => {
                     wallet_address: wallet.publicKey.toString()
                 })
             });
+
+            console.log('🔐 Login response status:', response.status);
 
             if (!response.ok) {
                 throw new Error(`Login failed: ${response.status}`);
@@ -132,13 +199,13 @@ const CreateConcert = () => {
                 AuthService.setToken(data.token);
                 setToken(data.token);
                 setIsAuthenticated(true);
-                console.log('Logged in successfully with test mode');
+                console.log('✅ Logged in successfully');
             } else {
                 throw new Error('No token received from server');
             }
         } catch (error) {
-            console.error('Login error:', error);
-            setError('Failed to authenticate. Please try again.');
+            console.error('❌ Login error:', error);
+            setError(`Failed to authenticate: ${error.message}. Please check if backend is accessible.`);
         } finally {
             setIsLoggingIn(false);
         }
@@ -249,7 +316,7 @@ const CreateConcert = () => {
         return true;
     };
 
-    // Main function to create a concert (integrates with backend)
+    // ✅ FIXED: Main function to create a concert with dynamic API URL
     const handleCreateConcert = async (e) => {
         e.preventDefault();
 
@@ -297,8 +364,11 @@ const CreateConcert = () => {
                 formData.append('posterImage', posterImage);
             }
 
-            // Send request to backend
-            const response = await fetch('http://localhost:5000/api/concerts', {
+            // ✅ FIXED: Send request to backend with dynamic URL
+            const createUrl = `${API_BASE_URL}/concerts`;
+            console.log('🎵 Sending POST request to:', createUrl);
+
+            const response = await fetch(createUrl, {
                 method: 'POST',
                 headers: {
                     'x-auth-token': token
@@ -306,12 +376,22 @@ const CreateConcert = () => {
                 body: formData
             });
 
+            console.log('🎵 Concert creation response status:', response.status);
+
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.msg || `Failed to create concert: ${response.status}`);
+                let errorMessage = `Failed to create concert: ${response.status}`;
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.msg || errorData.message || errorMessage;
+                    console.error('🎵 Server error:', errorData);
+                } catch (e) {
+                    console.error('🎵 Could not parse error response');
+                }
+                throw new Error(errorMessage);
             }
 
             const result = await response.json();
+            console.log('🎵 Concert created successfully:', result);
 
             // Update UI
             setSuccess(true);
@@ -326,7 +406,7 @@ const CreateConcert = () => {
             }, 3000);
 
         } catch (error) {
-            console.error("Error creating concert:", error);
+            console.error("❌ Error creating concert:", error);
             setError(error.message || "Failed to create concert. Please try again.");
             setSuccess(false);
         } finally {
@@ -779,6 +859,15 @@ const CreateConcert = () => {
             </div>
 
             <div className="max-w-4xl mx-auto relative">
+                {/* ✅ Environment Debug Info */}
+                <div className="mb-4 p-3 bg-gray-800/30 rounded-lg text-xs text-gray-400">
+                    <div className="flex justify-between items-center">
+                        <span>Environment: <strong className="text-white">{process.env.NODE_ENV || 'development'}</strong></span>
+                        <span>API: <strong className="text-purple-400">{API_BASE_URL}</strong></span>
+                        <span>Domain: <strong className="text-blue-400">{window.location.hostname}</strong></span>
+                    </div>
+                </div>
+
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
