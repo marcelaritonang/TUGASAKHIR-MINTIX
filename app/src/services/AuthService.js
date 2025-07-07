@@ -1,36 +1,83 @@
-// src/services/AuthService.js - Dengan perbaikan integrasi Solana
+// src/services/AuthService.js - ENHANCED WITH RAILWAY INTEGRATION
 class AuthService {
     constructor() {
-        this.baseUrl = process.env.REACT_APP_API_URL ||
-            (process.env.NODE_ENV === 'production'
-                ? 'https://tugasakhir-mintix-production.up.railway.app/api'
-                : 'http://localhost:5000/api');
+        // ✅ ENHANCED: Use same URL logic as ApiService
+        this.baseUrl = this.determineBaseUrl();
+        this.tokenKey = 'auth_token';
 
-        this.tokenKey = 'auth_token'; // Kunci konsisten untuk token
+        console.log('🔐 AuthService Configuration:');
+        console.log('   Base URL:', this.baseUrl);
+        console.log('   Environment:', process.env.NODE_ENV);
 
-        // Tambahkan event untuk notifikasi perubahan status auth
         this.authChangeListeners = [];
-
-        // Catat waktu terakhir login berhasil
         this.lastSuccessfulLogin = null;
-
-        // Catat status token masih valid atau tidak
         this.tokenValid = false;
 
-        // Cek login saat konstruktor
+        // ✅ NEW: Connection status tracking
+        this.connectionStatus = {
+            isConnected: true,
+            lastError: null,
+            lastCheck: null
+        };
+
+        // Auto-check auth on startup
         this.checkInitialAuth();
     }
 
-    // Cek initial auth state saat aplikasi load
+    // ✅ ENHANCED: Smart URL determination (same as ApiService)
+    determineBaseUrl() {
+        // Priority 1: Environment variable
+        if (process.env.REACT_APP_API_URL) {
+            const url = process.env.REACT_APP_API_URL;
+            console.log('🎯 AuthService using REACT_APP_API_URL:', url);
+            return url;
+        }
+
+        // Priority 2: Auto-detect based on current domain
+        if (typeof window !== 'undefined') {
+            const hostname = window.location.hostname;
+
+            // If on Vercel production
+            if (hostname.includes('vercel.app') ||
+                hostname.includes('tugasakhir-mintix') ||
+                hostname.includes('mintix')) {
+                const railwayUrl = 'https://tugasakhir-mintix-production.up.railway.app/api';
+                console.log('🚀 AuthService detected Vercel, using Railway:', railwayUrl);
+                return railwayUrl;
+            }
+
+            // If on localhost
+            if (hostname === 'localhost' || hostname === '127.0.0.1') {
+                const localUrl = 'http://localhost:5000/api';
+                console.log('🏠 AuthService detected localhost:', localUrl);
+                return localUrl;
+            }
+        }
+
+        // Priority 3: Environment fallback
+        const fallbackUrl = process.env.NODE_ENV === 'production'
+            ? 'https://tugasakhir-mintix-production.up.railway.app/api'
+            : 'http://localhost:5000/api';
+
+        console.log('⚠️ AuthService using fallback URL:', fallbackUrl);
+        return fallbackUrl;
+    }
+
+    // ✅ ENHANCED: Better initial auth check
     async checkInitialAuth() {
         const token = this.getToken();
         if (token) {
-            // Coba validasi token yang ada
             try {
-                await this.validateToken();
+                console.log('🔍 Checking initial auth status...');
+                const isValid = await this.validateToken();
+                if (!isValid) {
+                    console.log('❌ Initial token invalid, clearing...');
+                    this.removeToken();
+                } else {
+                    console.log('✅ Initial token is valid');
+                }
             } catch (err) {
                 console.error("Initial token validation failed:", err);
-                // Hapus token kalau invalid
                 if (err.status === 401 || err.status === 403) {
                     this.removeToken();
                 }
@@ -38,52 +85,40 @@ class AuthService {
         }
     }
 
-    // Get token from localStorage
     getToken() {
         return localStorage.getItem(this.tokenKey);
     }
 
-    // Set token in localStorage
     setToken(token) {
         localStorage.setItem(this.tokenKey, token);
         this.tokenValid = true;
         this.lastSuccessfulLogin = Date.now();
-
-        // Notifikasi semua listeners
         this._notifyAuthChange(true);
+
+        console.log('✅ Token saved successfully');
     }
 
-    // Remove token (logout)
     removeToken() {
         localStorage.removeItem(this.tokenKey);
         this.tokenValid = false;
-
-        // Notifikasi semua listeners
         this._notifyAuthChange(false);
+
+        console.log('🗑️ Token removed');
     }
 
-    // Check if user is authenticated
     isAuthenticated() {
         const token = this.getToken();
+        if (!token) return false;
 
-        // Jika tidak ada token, jelas tidak terotentikasi
-        if (!token) {
-            return false;
-        }
+        // If we know the token is valid, return true
+        if (this.tokenValid) return true;
 
-        // Jika token ada, periksa jika kita tahu token ini valid
-        if (this.tokenValid) {
-            return true;
-        }
-
-        // Jika ragu tentang validitas, coba refresh jika perlu
-        this.refreshTokenIfNeeded();
-
-        // Untuk sementara, anggap valid sampai dibuktikan sebaliknya
+        // Schedule async validation but return true for now
+        this.validateToken().catch(() => { });
         return !!token;
     }
 
-    // Validasi token secara asinkron
+    // ✅ ENHANCED: Better token validation with Railway retry
     async validateToken() {
         const token = this.getToken();
         if (!token) {
@@ -91,51 +126,361 @@ class AuthService {
             return false;
         }
 
-        try {
-            // Gunakan timeout untuk mencegah operasi yang menggantung
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000);
+        // ✅ NEW: Add retry logic for Railway
+        const maxRetries = 3;
+        let retryCount = 0;
 
-            const response = await fetch(`${this.baseUrl}/auth/validate`, {
-                headers: {
-                    'x-auth-token': token
-                },
-                signal: controller.signal
-            });
+        while (retryCount <= maxRetries) {
+            try {
+                console.log(`🔍 Validating token (attempt ${retryCount + 1}/${maxRetries + 1})...`);
 
-            clearTimeout(timeoutId);
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000); // Increased timeout for Railway
 
-            if (!response.ok) {
-                const error = new Error('Token validation failed');
-                error.status = response.status;
-                throw error;
-            }
+                const response = await fetch(`${this.baseUrl}/auth/validate`, {
+                    headers: {
+                        'x-auth-token': token,
+                        'Content-Type': 'application/json'
+                    },
+                    signal: controller.signal
+                });
 
-            // Jika response OK, token valid
-            this.tokenValid = true;
-            return true;
-        } catch (error) {
-            console.error('Token validation error:', error);
+                clearTimeout(timeoutId);
 
-            // Jika error 401/403, token tidak valid
-            if (error.status === 401 || error.status === 403) {
-                this.removeToken();
-                this.tokenValid = false;
+                if (!response.ok) {
+                    console.log(`❌ Token validation failed: ${response.status}`);
+
+                    if (response.status === 401 || response.status === 403) {
+                        this.removeToken();
+                        this.tokenValid = false;
+                        this.connectionStatus.lastError = 'Authentication failed';
+                        return false;
+                    }
+
+                    throw new Error(`Validation failed: ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log('✅ Token validation successful');
+
+                this.tokenValid = true;
+                this.connectionStatus.isConnected = true;
+                this.connectionStatus.lastError = null;
+                this.connectionStatus.lastCheck = Date.now();
+                return true;
+
+            } catch (error) {
+                retryCount++;
+                console.error(`Token validation error (attempt ${retryCount}):`, error.message);
+
+                if (error.name === 'AbortError') {
+                    console.log('⏰ Token validation timed out');
+
+                    // ✅ NEW: Retry on timeout for Railway
+                    if (retryCount <= maxRetries) {
+                        const backoffDelay = Math.min(1000 * Math.pow(2, retryCount - 1), 5000);
+                        console.log(`🔄 Retrying validation in ${backoffDelay}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, backoffDelay));
+                        continue;
+                    }
+
+                    // If all retries failed, assume valid to avoid logout
+                    console.log('⚠️ Validation timeout after retries, assuming token valid');
+                    return true;
+                }
+
+                if (error.message?.includes('Failed to fetch')) {
+                    console.log('🌐 Network error during validation');
+                    this.connectionStatus.isConnected = false;
+                    this.connectionStatus.lastError = 'Network error';
+
+                    // ✅ NEW: Retry on network error
+                    if (retryCount <= maxRetries) {
+                        const backoffDelay = Math.min(2000 * retryCount, 8000);
+                        console.log(`🔄 Retrying network request in ${backoffDelay}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, backoffDelay));
+                        continue;
+                    }
+
+                    // Assume valid on network error to avoid unnecessary logout
+                    console.log('⚠️ Network error after retries, assuming token valid');
+                    return true;
+                }
+
+                // ✅ NEW: Don't retry on 4xx errors (except timeouts)
+                if (error.status >= 400 && error.status < 500) {
+                    this.connectionStatus.lastError = `Client error: ${error.status}`;
+                    return false;
+                }
+
+                // ✅ NEW: Retry on 5xx errors
+                if (error.status >= 500 && retryCount <= maxRetries) {
+                    const backoffDelay = Math.min(1500 * retryCount, 6000);
+                    console.log(`🔄 Retrying server error in ${backoffDelay}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, backoffDelay));
+                    continue;
+                }
+
+                // Final fallback
+                console.log('⚠️ Validation failed after retries, assuming token invalid');
                 return false;
             }
+        }
 
-            // Jika timeout atau error jaringan, anggap token masih valid untuk sementara
-            if (error.name === 'AbortError') {
-                console.log('Token validation timed out, assuming valid');
-                return true;
+        return false;
+    }
+
+    // ✅ ENHANCED: Better login test with Railway retry
+    async loginTest(identifier) {
+        try {
+            console.log('🧪 Attempting test login with:', identifier);
+
+            // ✅ NEW: Add retry logic
+            const maxRetries = 3;
+            let retryCount = 0;
+
+            while (retryCount <= maxRetries) {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 20000); // Longer timeout for Railway
+
+                    // Prepare payload - support both email and wallet address
+                    const payload = {};
+                    if (identifier.includes('@')) {
+                        payload.email = identifier;
+                    } else {
+                        payload.walletAddress = identifier;
+                    }
+
+                    console.log(`📤 Sending login payload (attempt ${retryCount + 1}):`, payload);
+
+                    const response = await fetch(`${this.baseUrl}/auth/login-test`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(payload),
+                        signal: controller.signal
+                    });
+
+                    clearTimeout(timeoutId);
+
+                    console.log(`📥 Login response status: ${response.status}`);
+
+                    if (!response.ok) {
+                        let errorMsg = `Login failed with status ${response.status}`;
+
+                        try {
+                            const errorData = await response.json();
+                            errorMsg = errorData.msg || errorMsg;
+                            console.error('❌ Login error response:', errorData);
+                        } catch (parseErr) {
+                            console.error('❌ Could not parse error response');
+                        }
+
+                        // ✅ NEW: Retry on server errors
+                        if (response.status >= 500 && retryCount < maxRetries) {
+                            retryCount++;
+                            const backoffDelay = Math.min(1500 * retryCount, 5000);
+                            console.log(`🔄 Retrying login in ${backoffDelay}ms...`);
+                            await new Promise(resolve => setTimeout(resolve, backoffDelay));
+                            continue;
+                        }
+
+                        throw new Error(errorMsg);
+                    }
+
+                    const data = await response.json();
+                    console.log('✅ Login successful');
+
+                    if (data.token) {
+                        this.setToken(data.token);
+
+                        // Store user info
+                        if (data.user?.walletAddress) {
+                            localStorage.setItem('wallet_address', data.user.walletAddress);
+                        } else {
+                            localStorage.setItem('wallet_address', identifier);
+                        }
+
+                        // ✅ NEW: Update connection status
+                        this.connectionStatus.isConnected = true;
+                        this.connectionStatus.lastError = null;
+
+                        return true;
+                    } else {
+                        throw new Error('No token received from server');
+                    }
+
+                } catch (error) {
+                    retryCount++;
+                    console.error(`❌ Login error (attempt ${retryCount}):`, error.message);
+
+                    if (error.name === 'AbortError') {
+                        console.error('⏰ Login request timed out');
+
+                        // Retry on timeout
+                        if (retryCount <= maxRetries) {
+                            const backoffDelay = Math.min(2000 * retryCount, 8000);
+                            console.log(`🔄 Retrying login after timeout in ${backoffDelay}ms...`);
+                            await new Promise(resolve => setTimeout(resolve, backoffDelay));
+                            continue;
+                        }
+                    }
+
+                    if (error.message?.includes('Failed to fetch')) {
+                        console.error('🌐 Network error during login');
+                        this.connectionStatus.isConnected = false;
+                        this.connectionStatus.lastError = 'Network error';
+
+                        // Retry on network error
+                        if (retryCount <= maxRetries) {
+                            const backoffDelay = Math.min(3000 * retryCount, 10000);
+                            console.log(`🔄 Retrying network request in ${backoffDelay}ms...`);
+                            await new Promise(resolve => setTimeout(resolve, backoffDelay));
+                            continue;
+                        }
+                    }
+
+                    // Don't retry on client errors
+                    if (error.status >= 400 && error.status < 500) {
+                        this.connectionStatus.lastError = `Login failed: ${error.message}`;
+                        return false;
+                    }
+
+                    // Final attempt failed
+                    if (retryCount > maxRetries) {
+                        this.connectionStatus.lastError = `Login failed after ${maxRetries} retries`;
+                        return false;
+                    }
+                }
             }
 
-            // Error lain, anggap masih valid untuk menghindari logout yang tidak perlu
-            return true;
+            return false;
+        } catch (error) {
+            console.error('❌ Critical login error:', error);
+            this.connectionStatus.lastError = error.message;
+            return false;
         }
     }
 
-    // Tambahkan event listener untuk perubahan status auth
+    // ✅ ENHANCED: Better admin check with Railway retry
+    async checkAdminStatus() {
+        try {
+            const token = this.getToken();
+            if (!token) {
+                console.log('❌ No token available for admin check');
+                return { isAdmin: false };
+            }
+
+            // ✅ NEW: Add retry logic
+            const maxRetries = 3;
+            let retryCount = 0;
+
+            while (retryCount <= maxRetries) {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+                    const response = await fetch(`${this.baseUrl}/auth/admin-check`, {
+                        headers: {
+                            'x-auth-token': token,
+                            'Content-Type': 'application/json'
+                        },
+                        signal: controller.signal
+                    });
+
+                    clearTimeout(timeoutId);
+
+                    if (!response.ok) {
+                        console.log(`❌ Admin check failed: ${response.status}`);
+
+                        if (response.status === 401) {
+                            this.removeToken();
+                            this.tokenValid = false;
+                        }
+
+                        // ✅ NEW: Retry on server errors
+                        if (response.status >= 500 && retryCount < maxRetries) {
+                            retryCount++;
+                            const backoffDelay = Math.min(1000 * retryCount, 4000);
+                            console.log(`🔄 Retrying admin check in ${backoffDelay}ms...`);
+                            await new Promise(resolve => setTimeout(resolve, backoffDelay));
+                            continue;
+                        }
+
+                        return { isAdmin: false };
+                    }
+
+                    const data = await response.json();
+                    console.log('✅ Admin check successful:', data);
+
+                    this.tokenValid = true;
+                    this.connectionStatus.isConnected = true;
+                    this.connectionStatus.lastError = null;
+
+                    return { isAdmin: !!data.isAdmin };
+
+                } catch (error) {
+                    retryCount++;
+                    console.error(`❌ Admin check error (attempt ${retryCount}):`, error.message);
+
+                    if (error.name === 'AbortError') {
+                        console.log('⏰ Admin check timeout');
+
+                        if (retryCount <= maxRetries) {
+                            const backoffDelay = Math.min(1500 * retryCount, 5000);
+                            await new Promise(resolve => setTimeout(resolve, backoffDelay));
+                            continue;
+                        }
+                    }
+
+                    if (retryCount > maxRetries) {
+                        this.connectionStatus.lastError = 'Admin check failed after retries';
+                        return { isAdmin: false };
+                    }
+                }
+            }
+
+            return { isAdmin: false };
+        } catch (error) {
+            console.error('❌ Critical admin check error:', error);
+            this.connectionStatus.lastError = error.message;
+            return { isAdmin: false };
+        }
+    }
+
+    async isAdmin() {
+        try {
+            const { isAdmin } = await this.checkAdminStatus();
+            return isAdmin;
+        } catch (error) {
+            console.error('Error checking admin status:', error);
+            return false;
+        }
+    }
+
+    getWalletAddress() {
+        return localStorage.getItem('wallet_address');
+    }
+
+    logout() {
+        console.log('👋 Logging out...');
+        this.removeToken();
+        localStorage.removeItem('wallet_address');
+        localStorage.removeItem('myTickets');
+
+        // Clear other caches
+        try {
+            if (window.ApiService?.clearCache) {
+                window.ApiService.clearCache();
+            }
+        } catch (e) {
+            console.error('Error clearing API cache during logout:', e);
+        }
+    }
+
+    // Event listener management
     onAuthChange(callback) {
         if (typeof callback === 'function') {
             this.authChangeListeners.push(callback);
@@ -144,12 +489,10 @@ class AuthService {
         return false;
     }
 
-    // Hapus event listener
     removeAuthChangeListener(callback) {
         this.authChangeListeners = this.authChangeListeners.filter(cb => cb !== callback);
     }
 
-    // Panggil semua listeners
     _notifyAuthChange(isAuthenticated) {
         this.authChangeListeners.forEach(callback => {
             try {
@@ -158,6 +501,61 @@ class AuthService {
                 console.error('Error in auth change listener:', error);
             }
         });
+    }
+
+    // ✅ NEW: Connection test method
+    async testConnection() {
+        try {
+            console.log('🧪 Testing auth service connection...');
+            const startTime = Date.now();
+
+            const response = await fetch(`${this.baseUrl}/auth/nonce`, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            const responseTime = Date.now() - startTime;
+
+            if (response.ok) {
+                console.log(`✅ Auth service connection successful (${responseTime}ms)`);
+                this.connectionStatus.isConnected = true;
+                this.connectionStatus.lastError = null;
+                return { success: true, responseTime };
+            } else {
+                console.log('❌ Auth service connection failed:', response.status);
+                this.connectionStatus.isConnected = false;
+                this.connectionStatus.lastError = `HTTP ${response.status}`;
+                return { success: false, error: `HTTP ${response.status}` };
+            }
+        } catch (error) {
+            console.error('❌ Auth service connection error:', error);
+            this.connectionStatus.isConnected = false;
+            this.connectionStatus.lastError = error.message;
+            return { success: false, error: error.message };
+        }
+    }
+
+    // ✅ NEW: Get connection status
+    getConnectionStatus() {
+        return {
+            ...this.connectionStatus,
+            lastCheck: this.connectionStatus.lastCheck ?
+                new Date(this.connectionStatus.lastCheck).toISOString() : null
+        };
+    }
+
+    // ✅ NEW: Debug info
+    getDebugInfo() {
+        return {
+            baseUrl: this.baseUrl,
+            hasToken: !!this.getToken(),
+            tokenValid: this.tokenValid,
+            lastSuccessfulLogin: this.lastSuccessfulLogin ?
+                new Date(this.lastSuccessfulLogin).toISOString() : null,
+            walletAddress: this.getWalletAddress(),
+            connectionStatus: this.getConnectionStatus(),
+            listenerCount: this.authChangeListeners.length
+        };
     }
 
     // Login dengan test endpoint - untuk pengembangan
