@@ -1360,116 +1360,160 @@ class ApiService {
 
     async getMintedSeats(concertId) {
         try {
-            console.log(`🔍 Getting minted seats for concert: ${concertId} (ENHANCED FRESH)`);
+            console.log(`🔍 ROBUST: Getting minted seats for concert: ${concertId}`);
 
             if (!concertId) {
                 console.error("Missing concertId");
                 return { success: false, seats: [], error: 'Concert ID required' };
             }
 
-            // ✅ ENHANCED: Multiple cache busters untuk ensure fresh data
-            const timestamp = Date.now();
-            const randomId = Math.random().toString(36).substring(2, 8);
-            const userAgent = navigator.userAgent.substring(0, 20);
+            // ✅ STEP 1: Cache check first
+            const cacheKey = `minted_seats_${concertId}`;
+            const cached = localStorage.getItem(cacheKey);
+            const cacheTimestamp = localStorage.getItem(`${cacheKey}_timestamp`);
 
-            // ✅ ENHANCED: API URL dengan multiple cache busters
-            const apiUrl = `${this.baseUrl}/tickets/concerts/${concertId}/minted-seats?t=${timestamp}&r=${randomId}&fresh=true&v=2.0`;
-
-            console.log(`📡 Fetching ENHANCED FRESH from: ${apiUrl}`);
-
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-            try {
-                const response = await fetch(apiUrl, {
-                    method: 'GET',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        // ✅ ENHANCED: Ultra-aggressive cache-busting headers
-                        'Cache-Control': 'no-cache, no-store, must-revalidate, private, max-age=0',
-                        'Pragma': 'no-cache',
-                        'Expires': '0',
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'X-Fresh-Request': 'true',
-                        'X-Timestamp': timestamp.toString(),
-                        'X-Random': randomId,
-                        'X-Concert-Id': concertId.toString()
-                    },
-                    signal: controller.signal,
-                    // ✅ ENHANCED: Force no browser cache
-                    cache: 'no-store'
-                });
-
-                clearTimeout(timeoutId);
-
-                if (!response.ok) {
-                    throw new Error(`API error: ${response.status} ${response.statusText}`);
-                }
-
-                const data = await response.json();
-                console.log('🎫 ENHANCED API Response:', data);
-
-                const seats = data.seats || [];
-                console.log(`✅ ENHANCED FRESH DATA: ${seats.length} minted seats: [${seats.join(', ')}]`);
-
-                // ✅ ENHANCED: Update cache dengan fresh data (opsional, tapi berguna untuk fallback)
-                const cacheKey = `minted_seats_${concertId}`;
-                try {
-                    localStorage.setItem(cacheKey, JSON.stringify(seats));
-                    console.log(`💾 Updated cache for concert ${concertId}`);
-                } catch (cacheErr) {
-                    console.warn('Cache update failed:', cacheErr);
-                }
-
-                return {
-                    success: true,
-                    seats,
-                    timestamp: data.timestamp || timestamp,
-                    source: 'api-enhanced',
-                    fresh: true,
-                    concertId: concertId
-                };
-
-            } catch (fetchError) {
-                clearTimeout(timeoutId);
-
-                console.error('❌ Enhanced API fetch failed:', fetchError);
-
-                if (fetchError.name === 'AbortError') {
-                    console.error('⏰ Request timed out');
-                }
-
-                // ✅ Try cache only if network completely failed
-                const cacheKey = `minted_seats_${concertId}`;
-                try {
-                    const cachedSeats = JSON.parse(localStorage.getItem(cacheKey) || '[]');
-                    if (cachedSeats && cachedSeats.length > 0) {
-                        console.warn(`⚠️ Using cached data (${cachedSeats.length} seats) due to API failure`);
+            // Use cache if less than 5 seconds old (very fresh cache)
+            if (cached && cacheTimestamp) {
+                const age = Date.now() - parseInt(cacheTimestamp);
+                if (age < 5000) {
+                    try {
+                        const cachedSeats = JSON.parse(cached);
+                        console.log(`✅ Using fresh cache: ${cachedSeats.length} seats (${age}ms old)`);
                         return {
                             success: true,
                             seats: cachedSeats,
-                            source: 'cache_fallback',
-                            warning: 'Using cached data due to API failure'
+                            source: 'cache',
+                            age: age
                         };
+                    } catch (e) {
+                        console.warn('Cache parse error:', e);
                     }
-                } catch (cacheErr) {
-                    console.error('Cache read failed:', cacheErr);
                 }
-
-                throw fetchError;
             }
 
-        } catch (error) {
-            console.error('❌ Error getting enhanced minted seats:', error);
+            // ✅ STEP 2: Simple API call with retry
+            const maxRetries = 3;
+            let lastError = null;
+
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    console.log(`📡 API attempt ${attempt}/${maxRetries} for concert ${concertId}`);
+
+                    // ✅ SIMPLE REQUEST - minimal headers to avoid CORS
+                    const response = await fetch(`${this.baseUrl}/tickets/concerts/${concertId}/minted-seats?t=${Date.now()}`, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json'
+                            // ✅ REMOVED: All problematic headers
+                        },
+                        cache: 'no-store'
+                    });
+
+                    console.log(`📥 Response: ${response.status} ${response.statusText}`);
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log('🎫 API Success:', data);
+
+                        const seats = Array.isArray(data.seats) ? data.seats : [];
+
+                        // ✅ CACHE SUCCESS RESULT
+                        localStorage.setItem(cacheKey, JSON.stringify(seats));
+                        localStorage.setItem(`${cacheKey}_timestamp`, Date.now().toString());
+
+                        console.log(`✅ API SUCCESS: ${seats.length} minted seats: [${seats.join(', ')}]`);
+
+                        return {
+                            success: true,
+                            seats,
+                            timestamp: Date.now(),
+                            source: 'api-fresh',
+                            attempt: attempt
+                        };
+                    } else {
+                        // ✅ NON-FATAL: Log error but continue to fallback
+                        console.warn(`⚠️ API returned ${response.status}, attempt ${attempt}/${maxRetries}`);
+                        lastError = new Error(`API ${response.status}: ${response.statusText}`);
+
+                        // Wait before retry (except on last attempt)
+                        if (attempt < maxRetries) {
+                            await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                        }
+                    }
+
+                } catch (fetchError) {
+                    console.warn(`❌ Fetch error attempt ${attempt}/${maxRetries}:`, fetchError.message);
+                    lastError = fetchError;
+
+                    // Wait before retry (except on last attempt)
+                    if (attempt < maxRetries) {
+                        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                    }
+                }
+            }
+
+            // ✅ STEP 3: ALL ATTEMPTS FAILED - Use any available cache
+            console.warn('🔄 All API attempts failed, checking for any available cache...');
+
+            if (cached) {
+                try {
+                    const cachedSeats = JSON.parse(cached);
+                    const age = cacheTimestamp ? Date.now() - parseInt(cacheTimestamp) : 'unknown';
+
+                    console.log(`🗄️ FALLBACK: Using stale cache: ${cachedSeats.length} seats (${age}ms old)`);
+
+                    return {
+                        success: true,
+                        seats: cachedSeats,
+                        source: 'stale-cache',
+                        age: age,
+                        warning: 'Using cached data due to API failure'
+                    };
+                } catch (e) {
+                    console.error('Cache parse error:', e);
+                }
+            }
+
+            // ✅ STEP 4: NO CACHE AVAILABLE - Return empty but valid response
+            console.warn('❌ No cache available, returning empty seats');
+
             return {
                 success: false,
-                seats: [],
-                error: error.message,
-                source: 'error'
+                seats: [], // ✅ ALWAYS return array
+                error: lastError?.message || 'API unavailable',
+                source: 'empty-fallback',
+                retryable: true
+            };
+
+        } catch (criticalError) {
+            console.error('❌ CRITICAL ERROR in getMintedSeats:', criticalError);
+
+            // ✅ FINAL FALLBACK: Try emergency cache recovery
+            try {
+                const emergencyCache = localStorage.getItem(`minted_seats_${concertId}`);
+                if (emergencyCache) {
+                    const seats = JSON.parse(emergencyCache);
+                    console.log(`🚨 EMERGENCY: Using any available cache: ${seats.length} seats`);
+                    return {
+                        success: true,
+                        seats,
+                        source: 'emergency-cache',
+                        warning: 'Emergency cache recovery'
+                    };
+                }
+            } catch (e) {
+                // Ignore cache errors
+            }
+
+            // ✅ GUARANTEED RETURN: Never crash the app
+            return {
+                success: false,
+                seats: [], // ✅ ALWAYS return empty array, never undefined
+                error: criticalError.message,
+                source: 'critical-error'
             };
         }
     }
-
     /**
  * Memperbarui cache tempat duduk yang sudah dibeli
  * @param {string} concertId - ID konser

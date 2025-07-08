@@ -1,4 +1,5 @@
-// frontend/src/services/socketService.js - ESSENTIAL Socket.IO Client
+// app/src/services/socketService.js - SIMPLE WORKING VERSION
+
 import { io } from 'socket.io-client';
 
 class SocketService {
@@ -12,15 +13,39 @@ class SocketService {
 
         // Event listeners storage
         this.eventListeners = new Map();
+
+        console.log('🔗 SocketService initialized (Simple Version)');
+    }
+
+    /**
+     * ✅ SIMPLE: Get server URL
+     */
+    getServerUrl() {
+        const hostname = window.location.hostname;
+
+        // Localhost development
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+            return 'http://localhost:5000';
+        }
+
+        // Vercel production
+        if (hostname.includes('vercel.app')) {
+            return 'https://tugasakhir-mintix-production.up.railway.app';
+        }
+
+        // Environment variable fallback
+        return process.env.REACT_APP_API_URL?.replace('/api', '') ||
+            process.env.REACT_APP_SERVER_URL ||
+            'http://localhost:5000';
     }
 
     /**
      * Connect to WebSocket server
      */
     connect(serverUrl = null) {
-        const url = serverUrl || process.env.REACT_APP_SERVER_URL || 'http://localhost:5000';
+        const url = serverUrl || this.getServerUrl();
 
-        if (this.socket) {
+        if (this.socket && this.isConnected) {
             console.log('🔌 Socket already connected');
             return Promise.resolve();
         }
@@ -28,41 +53,56 @@ class SocketService {
         console.log(`🔌 Connecting to WebSocket server: ${url}`);
 
         return new Promise((resolve, reject) => {
-            this.socket = io(url, {
-                transports: ['websocket', 'polling'],
-                timeout: 20000,
-                forceNew: true
-            });
+            try {
+                this.socket = io(url, {
+                    // ✅ SIMPLE: Basic configuration that works
+                    transports: ['polling', 'websocket'],
+                    timeout: 20000,
+                    forceNew: true,
+                    autoConnect: true,
 
-            // Connection successful
-            this.socket.on('connect', () => {
-                console.log('✅ Socket connected:', this.socket.id);
-                this.isConnected = true;
-                this.reconnectAttempts = 0;
-                resolve();
-            });
+                    // ✅ Basic reconnection
+                    reconnection: true,
+                    reconnectionAttempts: this.maxReconnectAttempts,
+                    reconnectionDelay: 1000,
+                    reconnectionDelayMax: 5000
+                });
 
-            // Connection error
-            this.socket.on('connect_error', (error) => {
-                console.error('❌ Socket connection error:', error);
-                this.isConnected = false;
+                // Connection successful
+                this.socket.on('connect', () => {
+                    console.log('✅ Socket connected:', this.socket.id);
+                    console.log('🚀 Transport:', this.socket.io.engine.transport.name);
+
+                    this.isConnected = true;
+                    this.reconnectAttempts = 0;
+                    resolve();
+                });
+
+                // Connection error
+                this.socket.on('connect_error', (error) => {
+                    console.error('❌ Socket connection error:', error);
+                    this.isConnected = false;
+                    reject(error);
+                });
+
+                // Disconnection
+                this.socket.on('disconnect', (reason) => {
+                    console.log('🔌 Socket disconnected:', reason);
+                    this.isConnected = false;
+
+                    // Attempt reconnection for certain reasons
+                    if (reason === 'io server disconnect') {
+                        this.attemptReconnect();
+                    }
+                });
+
+                // Setup essential event handlers
+                this.setupEventHandlers();
+
+            } catch (error) {
+                console.error('❌ Socket setup error:', error);
                 reject(error);
-            });
-
-            // Disconnection
-            this.socket.on('disconnect', (reason) => {
-                console.log('🔌 Socket disconnected:', reason);
-                this.isConnected = false;
-
-                // Attempt reconnection for certain reasons
-                if (reason === 'io server disconnect') {
-                    // Server disconnected, try to reconnect
-                    this.attemptReconnect();
-                }
-            });
-
-            // Setup essential event handlers
-            this.setupEventHandlers();
+            }
         });
     }
 
@@ -78,10 +118,22 @@ class SocketService {
             this.emit('authenticated', data);
         });
 
-        // Seat status updates (CRITICAL untuk real-time)
+        // Authentication error
+        this.socket.on('authError', (error) => {
+            console.error('❌ Socket auth error:', error);
+            this.emit('authError', error);
+        });
+
+        // ✅ CRITICAL: Seat status updates (for real-time seat detection)
         this.socket.on('seatStatusUpdate', (data) => {
             console.log('🎫 Seat status update:', data);
             this.emit('seatStatusUpdate', data);
+        });
+
+        // ✅ Alternative seat update event
+        this.socket.on('seatStatusChanged', (data) => {
+            console.log('🎫 Seat status changed:', data);
+            this.emit('seatStatusChanged', data);
         });
 
         // User's seat locked
@@ -116,7 +168,6 @@ class SocketService {
 
         // Connection health
         this.socket.on('pong', (data) => {
-            // Calculate latency
             if (data.timestamp) {
                 const latency = Date.now() - data.timestamp;
                 this.emit('connectionHealth', { latency, serverTime: data.serverTime });
@@ -146,7 +197,8 @@ class SocketService {
 
         this.socket.emit('authenticate', {
             walletAddress,
-            concertId
+            concertId,
+            timestamp: Date.now()
         });
 
         return true;
@@ -166,7 +218,8 @@ class SocketService {
         this.socket.emit('selectSeat', {
             concertId,
             sectionName,
-            seatNumber
+            seatNumber,
+            timestamp: Date.now()
         });
 
         return true;
@@ -186,7 +239,8 @@ class SocketService {
         this.socket.emit('releaseSeat', {
             concertId,
             sectionName,
-            seatNumber
+            seatNumber,
+            timestamp: Date.now()
         });
 
         return true;
@@ -204,7 +258,8 @@ class SocketService {
         this.socket.emit('getSeatStatus', {
             concertId,
             sectionName,
-            seatNumber
+            seatNumber,
+            timestamp: Date.now()
         });
 
         return true;
@@ -220,23 +275,29 @@ class SocketService {
         }
 
         this.socket.emit('getConcertLocks', {
-            concertId
+            concertId,
+            timestamp: Date.now()
         });
 
         return true;
     }
 
     /**
-     * Get user's current locks
+     * ✅ NEW: Request seat update broadcast (simplified)
      */
-    getMyLocks(concertId) {
+    requestSeatUpdate(concertId, action, seatData) {
         if (!this.socket || !this.isConnected) {
-            console.warn('⚠️ Socket not connected, cannot get my locks');
+            console.warn('⚠️ Socket not connected, cannot request seat update');
             return false;
         }
 
-        this.socket.emit('getMyLocks', {
-            concertId
+        console.log(`📡 Requesting seat update: ${action}`);
+
+        this.socket.emit('requestSeatUpdate', {
+            concertId,
+            action,
+            seatData,
+            timestamp: Date.now()
         });
 
         return true;
@@ -310,15 +371,31 @@ class SocketService {
         }
 
         this.reconnectAttempts++;
-        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 10000); // Exponential backoff
+        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 10000);
 
         console.log(`🔄 Attempting reconnection ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`);
 
         setTimeout(() => {
-            if (this.socket) {
+            if (this.socket && !this.isConnected) {
                 this.socket.connect();
             }
         }, delay);
+    }
+
+    /**
+     * ✅ Manual reconnect
+     */
+    reconnect() {
+        console.log('🔄 Manual reconnection requested');
+
+        if (this.socket) {
+            this.socket.disconnect();
+        }
+
+        this.isConnected = false;
+        this.reconnectAttempts = 0;
+
+        return this.connect();
     }
 
     /**
@@ -346,12 +423,46 @@ class SocketService {
             socketId: this.socket?.id || null,
             currentUser: this.currentUser,
             currentConcert: this.currentConcert,
-            reconnectAttempts: this.reconnectAttempts
+            reconnectAttempts: this.reconnectAttempts,
+            serverUrl: this.getServerUrl()
         };
+    }
+
+    /**
+     * ✅ Test connection
+     */
+    async testConnection() {
+        console.log('🧪 Testing WebSocket connection...');
+
+        try {
+            await this.connect();
+
+            const status = this.getStatus();
+            console.log('✅ Connection test successful:', status);
+
+            return {
+                success: true,
+                status: status
+            };
+
+        } catch (error) {
+            console.error('❌ Connection test failed:', error);
+
+            return {
+                success: false,
+                error: error.message,
+                status: this.getStatus()
+            };
+        }
     }
 }
 
 // Create singleton instance
 const socketService = new SocketService();
+
+// Make available globally for debugging
+if (typeof window !== 'undefined') {
+    window.socketService = socketService;
+}
 
 export default socketService;

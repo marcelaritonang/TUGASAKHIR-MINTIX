@@ -253,56 +253,199 @@ router.get('/ping', (req, res) => {
         time: new Date().toISOString()
     });
 });
-
-// ✅ GET MINTED SEATS - NO AUTH REQUIRED (PUBLIC DATA)
+// ✅ FIXED: GET MINTED SEATS - STABLE VERSION
 router.get('/concerts/:concertId/minted-seats', enhancedRateLimit, async (req, res) => {
     try {
-        console.log('🎭 MINTED SEATS ROUTE HIT (NO AUTH)');
+        console.log('🎭 MINTED SEATS ROUTE - PERMISSIVE VERSION');
 
         const concertId = req.params.concertId.toString();
+        console.log('🎭 Concert ID:', concertId);
+
         const Ticket = require('../models/Ticket');
 
-        const tickets = await Ticket.find({ concertId: concertId })
-            .select('sectionName seatNumber owner createdAt transactionSignature');
+        // ✅ STEP 1: Get ALL tickets for concert
+        console.log('🔍 Getting ALL tickets for concert...');
 
-        const seats = tickets.map(ticket => {
-            if (ticket.seatNumber && ticket.seatNumber.includes('-')) {
-                return ticket.seatNumber;
-            } else {
-                return `${ticket.sectionName}-${ticket.seatNumber}`;
+        const allTickets = await Ticket.find({
+            concertId: concertId
+            // ✅ REMOVED: isUsed filter - too restrictive
+        })
+            .select('sectionName seatNumber owner createdAt transactionSignature status isUsed')
+            .lean();
+
+        console.log(`🔍 Found ${allTickets.length} total tickets for concert`);
+
+        // ✅ STEP 2: PERMISSIVE FILTERING - Include more tickets
+        const mintedTickets = allTickets.filter(ticket => {
+            // ✅ BASIC VALIDATION: Must have section and seat
+            if (!ticket.sectionName || !ticket.seatNumber) {
+                return false;
             }
-        }).filter(Boolean);
 
-        const detailedSeats = tickets.map(ticket => ({
-            seatCode: ticket.seatNumber.includes('-') ?
-                ticket.seatNumber :
-                `${ticket.sectionName}-${ticket.seatNumber}`,
-            owner: ticket.owner,
-            mintedAt: ticket.createdAt,
-            section: ticket.sectionName,
-            hasValidTransaction: !!ticket.transactionSignature &&
-                !ticket.transactionSignature.startsWith('dummy_') &&
-                !ticket.transactionSignature.startsWith('added_')
-        }));
+            // ✅ EXCLUDE: Obviously invalid tickets
+            if (ticket.isUsed === true) {
+                return false; // Definitely not minted if explicitly marked as used
+            }
 
-        return res.json({
-            success: true,
-            seats,
-            detailedSeats,
-            count: seats.length,
-            timestamp: new Date().toISOString(),
-            cacheStatus: 'fresh'
+            // ✅ PERMISSIVE CRITERIA: Include ticket if ANY of these are true
+            const criteria = {
+                hasOwner: ticket.owner && ticket.owner.trim() !== '',
+                hasTransaction: ticket.transactionSignature &&
+                    ticket.transactionSignature.trim() !== '' &&
+                    !ticket.transactionSignature.startsWith('dummy_') &&
+                    !ticket.transactionSignature.startsWith('error_'),
+                hasMintedStatus: ['minted', 'completed', 'confirmed', 'active', 'sold'].includes(ticket.status),
+                hasCreationDate: !!ticket.createdAt,
+                isNotExplicitlyUnused: ticket.isUsed !== true
+            };
+
+            // ✅ RELAXED LOGIC: Include if meets ANY major criteria
+            const shouldInclude = (
+                criteria.hasOwner ||
+                criteria.hasTransaction ||
+                criteria.hasMintedStatus
+            ) && criteria.isNotExplicitlyUnused;
+
+            if (shouldInclude) {
+                console.log(`✅ INCLUDING: ${ticket.sectionName}-${ticket.seatNumber} (` +
+                    `Owner: ${criteria.hasOwner}, ` +
+                    `Tx: ${criteria.hasTransaction}, ` +
+                    `Status: ${ticket.status}, ` +
+                    `Used: ${ticket.isUsed})`
+                );
+            }
+
+            return shouldInclude;
         });
 
+        console.log(`🔍 PERMISSIVE FILTER: ${mintedTickets.length} tickets included`);
+
+        // ✅ STEP 3: Generate seat codes (simplified)
+        const seatCodes = [];
+
+        mintedTickets.forEach((ticket) => {
+            try {
+                // ✅ SIMPLE SEAT CODE GENERATION
+                let seatCode;
+
+                // Handle different formats
+                if (ticket.seatNumber.includes('-')) {
+                    // Already formatted: "VIP-A1" or just "A1"
+                    if (ticket.seatNumber.includes(ticket.sectionName)) {
+                        seatCode = ticket.seatNumber; // "VIP-A1"
+                    } else {
+                        seatCode = `${ticket.sectionName}-${ticket.seatNumber}`; // "VIP-A1"
+                    }
+                } else {
+                    // Simple format: "A1" -> "VIP-A1"
+                    seatCode = `${ticket.sectionName}-${ticket.seatNumber}`;
+                }
+
+                // ✅ BASIC VALIDATION: Must contain hyphen and be reasonable length
+                if (seatCode && seatCode.includes('-') && seatCode.length >= 4) {
+                    seatCodes.push(seatCode);
+                    console.log(`✅ ADDED: ${seatCode}`);
+                } else {
+                    console.warn(`⚠️ SKIPPED invalid seat: ${seatCode}`);
+                }
+
+            } catch (err) {
+                console.error(`❌ Error processing ticket:`, err.message);
+            }
+        });
+
+        // ✅ STEP 4: Clean and deduplicate
+        const uniqueSeatCodes = [...new Set(seatCodes)].sort();
+
+        console.log(`🔍 FINAL RESULT: ${uniqueSeatCodes.length} unique minted seats`);
+        console.log('🔍 Seats:', uniqueSeatCodes);
+
+        // ✅ STEP 5: FIXED HEADERS - No conflicting cache directives
+        res.set({
+            'Cache-Control': 'no-cache, no-store, must-revalidate', // ✅ CONSISTENT
+            'Pragma': 'no-cache',
+            'Expires': '0',
+            'X-Timestamp': Date.now().toString(),
+            'X-Concert-Id': concertId,
+            'X-Minted-Count': uniqueSeatCodes.length.toString(),
+            'X-Filter-Mode': 'permissive'
+        });
+
+        // ✅ STEP 6: CONSISTENT RESPONSE FORMAT
+        const response = {
+            success: true,
+            seats: uniqueSeatCodes,
+            count: uniqueSeatCodes.length,
+            metadata: {
+                concertId: concertId,
+                totalTicketsScanned: allTickets.length,
+                ticketsIncluded: mintedTickets.length,
+                uniqueSeats: uniqueSeatCodes.length,
+                timestamp: Date.now(),
+                version: 'v4.0-permissive',
+                filterMode: 'relaxed'
+            },
+            debug: process.env.NODE_ENV === 'development' ? {
+                sampleIncludedTickets: mintedTickets.slice(0, 3).map(t => ({
+                    section: t.sectionName,
+                    seat: t.seatNumber,
+                    owner: t.owner?.substring(0, 8) + '...',
+                    status: t.status,
+                    hasTransaction: !!t.transactionSignature,
+                    isUsed: t.isUsed
+                }))
+            } : undefined
+        };
+
+        console.log(`✅ SENDING RESPONSE: ${uniqueSeatCodes.length} seats for concert ${concertId}`);
+        return res.json(response);
+
     } catch (error) {
-        console.error('Error getting minted seats:', error);
-        return res.status(500).json({
+        console.error('❌ CRITICAL ERROR in minted-seats route:', error);
+
+        // ✅ GUARANTEED FALLBACK: Always return valid structure
+        return res.status(200).json({ // ✅ Return 200, not 500
             success: false,
-            msg: 'Server error',
-            error: error.message
+            seats: [], // ✅ ALWAYS return empty array, never undefined
+            count: 0,
+            msg: 'Error getting minted seats',
+            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal error',
+            timestamp: Date.now(),
+            fallback: true,
+            metadata: {
+                concertId: req.params.concertId,
+                errorOccurred: true
+            }
         });
     }
 });
+
+// ✅ ADD: CACHE WARMING ENDPOINT (Optional - for performance)
+router.post('/concerts/:concertId/warm-cache', enhancedRateLimit, async (req, res) => {
+    try {
+        const { concertId } = req.params;
+        console.log(`🔥 Warming cache for concert: ${concertId}`);
+
+        // Trigger minted seats calculation
+        const response = await fetch(`${req.protocol}://${req.get('host')}/api/tickets/concerts/${concertId}/minted-seats`);
+        const data = await response.json();
+
+        return res.json({
+            success: true,
+            message: 'Cache warmed successfully',
+            mintedSeats: data.count || 0,
+            timestamp: Date.now()
+        });
+
+    } catch (error) {
+        console.error('❌ Error warming cache:', error);
+        return res.status(500).json({
+            success: false,
+            msg: 'Error warming cache'
+        });
+    }
+});
+
 
 // ==================== AUTHENTICATED ROUTES (AUTH REQUIRED) ====================
 
@@ -647,6 +790,122 @@ router.get('/system/locks', auth, (req, res) => {
         return res.status(500).json({
             success: false,
             msg: 'Server error',
+            error: error.message
+        });
+    }
+});
+router.get('/concerts/:concertId/debug', enhancedRateLimit, async (req, res) => {
+    try {
+        console.log('🔍 DEBUG ENDPOINT HIT');
+
+        const concertId = req.params.concertId.toString();
+        const Ticket = require('../models/Ticket');
+
+        // Get ALL tickets untuk concert ini
+        const allTickets = await Ticket.find({ concertId })
+            .select('sectionName seatNumber transactionSignature status isUsed createdAt owner')
+            .lean();
+
+        console.log(`🔍 DEBUG: Found ${allTickets.length} total tickets for concert ${concertId}`);
+
+        // Group tickets by different criteria
+        const ticketsByStatus = {};
+        const ticketsWithTxSig = [];
+        const ticketsWithoutTxSig = [];
+        const usedTickets = [];
+        const unusedTickets = [];
+
+        allTickets.forEach(ticket => {
+            // Group by status
+            const status = ticket.status || 'no_status';
+            if (!ticketsByStatus[status]) {
+                ticketsByStatus[status] = [];
+            }
+            ticketsByStatus[status].push({
+                seat: `${ticket.sectionName}-${ticket.seatNumber}`,
+                hasTransaction: !!ticket.transactionSignature,
+                isUsed: ticket.isUsed,
+                createdAt: ticket.createdAt
+            });
+
+            // Group by transaction signature
+            if (ticket.transactionSignature &&
+                ticket.transactionSignature.trim() !== '' &&
+                !ticket.transactionSignature.startsWith('dummy_')) {
+                ticketsWithTxSig.push({
+                    seat: `${ticket.sectionName}-${ticket.seatNumber}`,
+                    status: ticket.status,
+                    txSig: ticket.transactionSignature.substring(0, 12) + '...',
+                    isUsed: ticket.isUsed
+                });
+            } else {
+                ticketsWithoutTxSig.push({
+                    seat: `${ticket.sectionName}-${ticket.seatNumber}`,
+                    status: ticket.status,
+                    txSig: ticket.transactionSignature || 'none',
+                    isUsed: ticket.isUsed
+                });
+            }
+
+            // Group by usage
+            if (ticket.isUsed) {
+                usedTickets.push(`${ticket.sectionName}-${ticket.seatNumber}`);
+            } else {
+                unusedTickets.push(`${ticket.sectionName}-${ticket.seatNumber}`);
+            }
+        });
+
+        const response = {
+            success: true,
+            concertId,
+            summary: {
+                totalTickets: allTickets.length,
+                ticketsWithValidTxSig: ticketsWithTxSig.length,
+                ticketsWithoutValidTxSig: ticketsWithoutTxSig.length,
+                usedTickets: usedTickets.length,
+                unusedTickets: unusedTickets.length,
+                statusBreakdown: Object.keys(ticketsByStatus).map(status => ({
+                    status,
+                    count: ticketsByStatus[status].length
+                }))
+            },
+            breakdown: {
+                ticketsByStatus,
+                ticketsWithTransaction: ticketsWithTxSig,
+                ticketsWithoutTransaction: ticketsWithoutTxSig.slice(0, 5), // Limit untuk tidak overflow
+                usedTickets,
+                unusedTickets
+            },
+            sampleTickets: allTickets.slice(0, 5).map(t => ({
+                sectionName: t.sectionName,
+                seatNumber: t.seatNumber,
+                status: t.status,
+                isUsed: t.isUsed,
+                hasTransactionSignature: !!t.transactionSignature,
+                txSignature: t.transactionSignature ?
+                    (t.transactionSignature.substring(0, 16) + '...') : null,
+                createdAt: t.createdAt
+            })),
+            // What would be considered "minted" dengan current logic
+            wouldBeMinted: allTickets.filter(ticket => {
+                const hasValidTx = ticket.transactionSignature &&
+                    ticket.transactionSignature.trim() !== '' &&
+                    !ticket.transactionSignature.startsWith('dummy_');
+                const hasMintedStatus = ticket.status === 'minted' ||
+                    ticket.status === 'completed';
+                const isActive = !ticket.isUsed;
+                return (hasValidTx || hasMintedStatus) && isActive;
+            }).map(t => `${t.sectionName}-${t.seatNumber}`),
+            timestamp: new Date().toISOString()
+        };
+
+        console.log('🔍 DEBUG: Response summary:', response.summary);
+        return res.json(response);
+
+    } catch (error) {
+        console.error('🔍 DEBUG: Error:', error);
+        return res.status(500).json({
+            success: false,
             error: error.message
         });
     }
