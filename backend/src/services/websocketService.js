@@ -1,5 +1,5 @@
-// backend/src/services/websocketService.js - IMPROVED PRODUCTION VERSION
-const socketIo = require('socket.io');
+// backend/src/services/websocketService.js - COMPLETE FIXED VERSION
+const { Server } = require('socket.io'); // ✅ FIXED: Correct import
 
 class WebSocketService {
     constructor() {
@@ -28,18 +28,34 @@ class WebSocketService {
     }
 
     initialize(server) {
-        this.io = socketIo(server, {
+        // ✅ FIXED: Use correct Socket.IO Server constructor
+        this.io = new Server(server, {
             cors: {
-                origin: process.env.WEBSOCKET_CORS_ORIGIN || process.env.FRONTEND_URL || "http://localhost:3000",
-                methods: ["GET", "POST"],
-                credentials: true
+                origin: [
+                    "http://localhost:3000",
+                    "http://127.0.0.1:3000",
+                    "http://localhost:3001",
+                    "https://tugasakhir-mintix-bjin.vercel.app",
+                    "https://tugasakhir-mintix.vercel.app",
+                    "https://*.vercel.app",
+                    process.env.FRONTEND_URL,
+                    process.env.WEBSOCKET_CORS_ORIGIN,
+                    process.env.CORS_ORIGIN
+                ].filter(Boolean),
+                methods: ["GET", "POST", "PUT", "DELETE"],
+                credentials: true,
+                allowedHeaders: ["Content-Type", "Authorization", "x-auth-token"]
             },
             pingTimeout: 60000,
             pingInterval: 25000,
-            // **NEW: Enhanced configuration**
+            // ✅ Enhanced configuration
             maxHttpBufferSize: 1e6, // 1MB
             allowEIO3: true,
-            transports: ['websocket', 'polling']
+            transports: ['polling', 'websocket'], // ✅ Polling first for stability
+            upgradeTimeout: 30000,
+            path: '/socket.io/',
+            compression: false,
+            serveClient: false
         });
 
         this.setupConnectionHandlers();
@@ -68,6 +84,15 @@ class WebSocketService {
         this.io.engine.on('connection_error', (err) => {
             this.logError('Connection Error', err);
         });
+
+        // ✅ Log transport events for debugging
+        this.io.engine.on('upgrade', (socket) => {
+            console.log('🚀 Transport upgraded to WebSocket for:', socket.id);
+        });
+
+        this.io.engine.on('upgradeError', (err) => {
+            console.warn('⚠️ WebSocket upgrade failed, using polling:', err.message);
+        });
     }
 
     /**
@@ -87,7 +112,25 @@ class WebSocketService {
             lastReset: Date.now()
         });
 
+        const clientInfo = {
+            origin: socket.handshake.headers.origin,
+            userAgent: socket.handshake.headers['user-agent']?.substring(0, 50),
+            transport: socket.conn.transport.name,
+            timestamp: new Date().toISOString()
+        };
+
         console.log(`🔌 User connected: ${socket.id} (Total: ${this.connectionStats.currentConnections})`);
+        console.log(`   Origin: ${clientInfo.origin}`);
+        console.log(`   Transport: ${clientInfo.transport}`);
+
+        // Store connection info
+        this.connectedUsers.set(socket.id, {
+            socketId: socket.id,
+            connectedAt: Date.now(),
+            lastActivity: Date.now(),
+            requestCount: 0,
+            ...clientInfo
+        });
     }
 
     /**
@@ -117,6 +160,11 @@ class WebSocketService {
         // Get concert locks handler
         socket.on('getConcertLocks', (data) => {
             this.handleWithErrorBoundary(socket, 'getConcertLocks', data, this.handleGetConcertLocks.bind(this));
+        });
+
+        // ✅ NEW: Simple seat update request handler
+        socket.on('requestSeatUpdate', (data) => {
+            this.handleWithErrorBoundary(socket, 'requestSeatUpdate', data, this.handleSeatUpdateRequest.bind(this));
         });
 
         // **NEW: Connection health check**
@@ -223,6 +271,7 @@ class WebSocketService {
 
             case 'getConcertLocks':
             case 'getMyLocks':
+            case 'requestSeatUpdate':
                 return data.concertId;
 
             default:
@@ -254,14 +303,12 @@ class WebSocketService {
         }
 
         // Store user connection with enhanced data
-        this.connectedUsers.set(socket.id, {
-            socketId: socket.id,
-            walletAddress,
-            concertId,
-            connectedAt: Date.now(),
-            lastActivity: Date.now(),
-            requestCount: 0
-        });
+        const userInfo = this.connectedUsers.get(socket.id);
+        if (userInfo) {
+            userInfo.walletAddress = walletAddress;
+            userInfo.concertId = concertId;
+            userInfo.authenticated = true;
+        }
 
         socket.emit('authenticated', {
             success: true,
@@ -272,6 +319,39 @@ class WebSocketService {
         });
 
         console.log(`✅ User authenticated: ${walletAddress} in concert ${concertId}`);
+    }
+
+    /**
+     * ✅ NEW: Simple seat update request handler
+     */
+    handleSeatUpdateRequest(socket, data) {
+        const { concertId, action, seatData } = data;
+        console.log(`🎫 Seat update request: ${action} for concert ${concertId}`);
+
+        try {
+            // Broadcast to other users in concert
+            socket.to(`concert_${concertId}`).emit('seatStatusChanged', {
+                action,
+                concertId,
+                seatData,
+                timestamp: Date.now(),
+                source: 'user_action'
+            });
+
+            // Also emit seatStatusUpdate for compatibility
+            socket.to(`concert_${concertId}`).emit('seatStatusUpdate', {
+                action,
+                concertId,
+                sectionName: seatData?.sectionName,
+                seatNumber: seatData?.seatNumber,
+                seatData,
+                timestamp: Date.now(),
+                source: 'user_request'
+            });
+
+        } catch (error) {
+            console.error('❌ Seat update request error:', error);
+        }
     }
 
     /**
@@ -628,7 +708,9 @@ class WebSocketService {
         const userInfo = this.connectedUsers.get(socket.id);
         if (userInfo) {
             // **IMPROVED: Use proper service method instead of direct access**
-            this.releaseUserLocks(userInfo.walletAddress);
+            if (userInfo.walletAddress) {
+                this.releaseUserLocks(userInfo.walletAddress);
+            }
 
             // Remove from concert room tracking
             if (userInfo.concertId && this.concertRooms.has(userInfo.concertId)) {
@@ -778,6 +860,46 @@ class WebSocketService {
         }
     }
 
+    // ✅ NEW: Enhanced broadcast methods
+    broadcastSeatUpdate(concertId, updateData) {
+        try {
+            if (!this.io) {
+                console.warn('⚠️ WebSocket not initialized');
+                return false;
+            }
+
+            console.log(`📡 Broadcasting seat update for concert ${concertId}`);
+
+            this.io.to(`concert_${concertId}`).emit('seatStatusChanged', {
+                ...updateData,
+                timestamp: Date.now(),
+                source: 'server'
+            });
+
+            // Also emit seatStatusUpdate for compatibility
+            this.io.to(`concert_${concertId}`).emit('seatStatusUpdate', {
+                ...updateData,
+                timestamp: Date.now(),
+                source: 'server'
+            });
+
+            return true;
+
+        } catch (error) {
+            console.error('❌ Broadcast error:', error);
+            return false;
+        }
+    }
+
+    broadcastMintedSeatUpdate(concertId, seatData) {
+        return this.broadcastSeatUpdate(concertId, {
+            action: 'minted',
+            concertId,
+            seatData,
+            permanent: true
+        });
+    }
+
     notifyUserLockExpired(userId, lockData) {
         // Find user's socket and notify
         for (const [socketId, userInfo] of this.connectedUsers.entries()) {
@@ -884,6 +1006,16 @@ class WebSocketService {
         };
     }
 
+    // ✅ Health check
+    isHealthy() {
+        return {
+            websocketInitialized: !!this.io,
+            activeConnections: this.connectionStats.currentConnections,
+            activeRooms: this.concertRooms.size,
+            healthy: !!this.io && this.connectionStats.currentConnections >= 0
+        };
+    }
+
     /**
      * **NEW: Broadcast maintenance mode**
      */
@@ -970,24 +1102,26 @@ class WebSocketService {
         console.log(`🚨 EMERGENCY SHUTDOWN: ${reason}`);
 
         // Notify all connected users
-        this.io.emit('emergencyShutdown', {
-            reason,
-            message: 'Service is temporarily unavailable due to emergency maintenance',
-            timestamp: Date.now()
-        });
+        if (this.io) {
+            this.io.emit('emergencyShutdown', {
+                reason,
+                message: 'Service is temporarily unavailable due to emergency maintenance',
+                timestamp: Date.now()
+            });
 
-        // Give users 5 seconds to receive the message
-        setTimeout(() => {
-            // Force disconnect all users
-            this.io.disconnectSockets(true);
+            // Give users 5 seconds to receive the message
+            setTimeout(() => {
+                // Force disconnect all users
+                this.io.disconnectSockets(true);
 
-            // Clear all tracking maps
-            this.connectedUsers.clear();
-            this.concertRooms.clear();
-            this.rateLimits.clear();
+                // Clear all tracking maps
+                this.connectedUsers.clear();
+                this.concertRooms.clear();
+                this.rateLimits.clear();
 
-            console.log('🚨 Emergency shutdown completed');
-        }, 5000);
+                console.log('🚨 Emergency shutdown completed');
+            }, 5000);
+        }
     }
 
     /**
@@ -1088,19 +1222,21 @@ class WebSocketService {
         // (intervals would be cleared automatically, but good practice)
 
         // Notify all users of shutdown
-        this.io.emit('serviceShutdown', {
-            message: 'WebSocket service is shutting down',
-            timestamp: Date.now()
-        });
+        if (this.io) {
+            this.io.emit('serviceShutdown', {
+                message: 'WebSocket service is shutting down',
+                timestamp: Date.now()
+            });
 
-        // Clean up all tracking
-        this.connectedUsers.clear();
-        this.concertRooms.clear();
-        this.rateLimits.clear();
-        this.recentErrors = [];
+            // Clean up all tracking
+            this.connectedUsers.clear();
+            this.concertRooms.clear();
+            this.rateLimits.clear();
+            this.recentErrors = [];
 
-        // Close all connections
-        this.io.disconnectSockets(true);
+            // Close all connections
+            this.io.disconnectSockets(true);
+        }
 
         console.log('🔗 WebSocket service shutdown complete');
     }
