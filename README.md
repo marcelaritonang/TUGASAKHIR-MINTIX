@@ -12,3 +12,4 @@ Mintix is a Web3-based NFT ticketing platform that allows users to mint and veri
 - 💻 Built with Next.js, Anchor, and Tailwind CSS
 - ⚡ Fast and low-cost transactions on Solana Devnet
 
+KELARRRR
