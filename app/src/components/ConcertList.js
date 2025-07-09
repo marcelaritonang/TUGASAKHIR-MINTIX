@@ -4,7 +4,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { motion } from 'framer-motion';
 import LoadingSpinner from './common/LoadingSpinner';
 import AuthService from '../services/AuthService';
-
+import { API } from '../config/environment';
 // Gradient text component
 const GradientText = ({ text, className = "" }) => {
     return (
@@ -262,7 +262,7 @@ const ConcertList = () => {
             }
 
             // Fetch approved concerts
-            const response = await fetch(`http://localhost:5000/api/concerts?${params}`);
+            const response = await fetch(`${API.getApiUrl()}/concerts?${params}`);
 
             if (!response.ok) {
                 throw new Error(`Gagal mengambil data konser: ${response.status}`);
@@ -319,7 +319,7 @@ const ConcertList = () => {
             console.log("Using token for delete:", token ? "Token available" : "No token");
 
             // URL endpoint admin untuk menghapus konser
-            const deleteUrl = `http://localhost:5000/api/admin/concerts/${concertToDelete._id}`;
+            const deleteUrl = await fetch(`${API.getApiUrl()}/admin/concerts/${concertToDelete._id}`);
             console.log("Sending DELETE request to:", deleteUrl);
 
             // Send delete request to backend
